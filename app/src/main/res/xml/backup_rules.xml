@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!--
+        Exclude the Tink-encrypted DataStore file.
+        Android Keystore keys are hardware-bound and cannot be backed up.
+        If the encrypted file were restored without its key, TokenStore init
+        would throw GeneralSecurityException and crash on first launch.
+        Correct behavior: user re-enters credentials on new device.
+    -->
+    <exclude domain="file" path="datastore/hermes_secure_prefs.preferences_pb"/>
+</full-backup-content>
