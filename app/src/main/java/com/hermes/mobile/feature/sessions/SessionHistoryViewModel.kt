@@ -42,7 +42,12 @@ class SessionHistoryViewModel @Inject constructor(
         viewModelScope.launch {
             controls.update { it.copy(isSyncing = true, error = null) }
             repository.syncMessages(sessionId)
-                .onFailure { error -> controls.update { it.copy(error = error.message ?: "Sync failed") } }
+                .onFailure { error ->
+                    val msg = error.message ?: "Sync failed"
+                    if (!msg.contains("404")) {
+                        controls.update { it.copy(error = msg) }
+                    }
+                }
             controls.update { it.copy(isSyncing = false) }
         }
     }

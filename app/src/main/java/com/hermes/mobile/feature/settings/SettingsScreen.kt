@@ -1,5 +1,10 @@
 package com.hermes.mobile.feature.settings
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,7 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermes.mobile.core.settings.ThemeMode
 
@@ -38,10 +46,10 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(14.dp),
+            .padding(16.dp),
     ) {
         Header(title = "Settings", action = "Done", onAction = onBack)
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(24.dp))
         SettingRow("Theme", "Choose app color mode") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeMode.entries.forEach { mode ->
@@ -53,29 +61,36 @@ fun SettingsScreen(
                 }
             }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         ClickRow("Connection", state.serverUrl.ifBlank { "Not configured" }, onEditConnection)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         ClickRow("Agent control", "Memory, profiles, tools, skills, schedules", onAgentControl)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         ClickRow("Send Payment", "Send MATIC or tokens", onSendPayment)
-        Spacer(Modifier.height(24.dp))
-        Text("Danger zone", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(32.dp))
+        Text("Danger zone", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 4.dp))
+        Spacer(Modifier.height(10.dp))
         ClickRow("Log out", "Clear credentials", viewModel::confirmLogout, danger = true)
-        if (state.showLogoutConfirm) {
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("Cancel", false, viewModel::dismissLogout)
-                Chip(
-                    text = "Confirm logout",
-                    selected = true,
-                    onClick = {
-                        viewModel.logout()
-                        onLogout()
-                    },
-                    danger = true,
-                )
+        
+        AnimatedVisibility(
+            visible = state.showLogoutConfirm,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Column {
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Chip("Cancel", false, viewModel::dismissLogout)
+                    Chip(
+                        text = "Confirm logout",
+                        selected = true,
+                        onClick = {
+                            viewModel.logout()
+                            onLogout()
+                        },
+                        danger = true,
+                    )
+                }
             }
         }
     }
@@ -89,9 +104,10 @@ private fun Header(title: String, action: String, onAction: () -> Unit) {
             action,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .clickable(onClick = onAction)
-                .padding(8.dp),
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         )
     }
 }
@@ -101,9 +117,9 @@ private fun SettingRow(title: String, subtitle: String, trailing: @Composable ()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(14.dp),
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -119,17 +135,21 @@ private fun ClickRow(title: String, subtitle: String, onClick: () -> Unit, dange
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surface)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
             .clickable(onClick = onClick)
-            .padding(14.dp),
+            .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("Open", style = MaterialTheme.typography.labelLarge)
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -140,7 +160,7 @@ private fun Chip(text: String, selected: Boolean, onClick: () -> Unit, danger: B
         color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
         style = MaterialTheme.typography.labelLarge,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 when {
                     danger -> MaterialTheme.colorScheme.error
@@ -149,6 +169,6 @@ private fun Chip(text: String, selected: Boolean, onClick: () -> Unit, danger: B
                 },
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     )
 }

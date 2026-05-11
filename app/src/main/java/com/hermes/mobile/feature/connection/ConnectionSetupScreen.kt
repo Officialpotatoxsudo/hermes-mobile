@@ -13,8 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -25,10 +25,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
@@ -42,13 +49,20 @@ fun ConnectionSetupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        colors.surface,
+                        colors.background,
+                    ),
+                ),
+            )
             .imePadding()
             .padding(horizontal = 24.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.Bottom,
     ) {
         Icon(
-            imageVector = Icons.Default.Link,
+            imageVector = Icons.Rounded.Link,
             contentDescription = null,
             tint = colors.primary,
             modifier = Modifier.padding(bottom = 12.dp),
@@ -87,15 +101,19 @@ fun ConnectionSetupScreen(
             )
         }
         if (state.isHealthy) {
+            val scale = remember { Animatable(0f) }
+            LaunchedEffect(Unit) {
+                scale.animateTo(1f, animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow))
+            }
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 10.dp),
             ) {
                 Icon(
-                    imageVector = Icons.Default.CheckCircle,
+                    imageVector = Icons.Rounded.CheckCircle,
                     contentDescription = null,
                     tint = androidx.compose.ui.graphics.Color(0xFF4CAF50),
-                    modifier = Modifier.padding(end = 6.dp),
+                    modifier = Modifier.padding(end = 6.dp).scale(scale.value),
                 )
                 Text(
                     text = "Connection verified",
@@ -111,7 +129,7 @@ fun ConnectionSetupScreen(
                 containerColor = colors.primary,
                 contentColor = colors.onPrimary,
             ),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(28.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 20.dp)
@@ -137,12 +155,12 @@ private fun HermesTextField(
         singleLine = true,
         visualTransformation = if (secret) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
         ),
         modifier = Modifier.fillMaxWidth(),
     )

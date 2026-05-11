@@ -20,6 +20,9 @@ enum class ThemeMode {
     System,
     Light,
     Dark,
+    Sepia,
+    Nord,
+    Catppuccin,
 }
 
 @Singleton

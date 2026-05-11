@@ -1,5 +1,8 @@
 package com.hermes.mobile.feature.home
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,11 +23,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Payment
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Payment
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,7 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.feature.sessions.SessionListViewModel
@@ -52,7 +55,6 @@ fun HomeScreen(
     onNewChat: () -> Unit,
     onSessionClick: (String) -> Unit,
     onAgentControl: () -> Unit,
-    onSendPayment: () -> Unit,
     onSettings: () -> Unit,
     viewModel: SessionListViewModel = hiltViewModel(),
 ) {
@@ -79,15 +81,15 @@ fun HomeScreen(
             value = state.query,
             onValueChange = viewModel::onQueryChanged,
             leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null)
+                Icon(Icons.Rounded.Search, contentDescription = null)
             },
             placeholder = { Text("Search chats") },
             singleLine = true,
             shape = RoundedCornerShape(22.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.36f),
+                focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
-                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
             ),
             modifier = Modifier
@@ -103,8 +105,10 @@ fun HomeScreen(
             )
         }
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 LiveAgentRow(
@@ -121,7 +125,7 @@ fun HomeScreen(
                     AgentSessionRow(session, onClick = { onSessionClick(session.id) })
                 }
             }
-            item { Spacer(Modifier.height(16.dp)) }
+            item { Spacer(Modifier.height(100.dp)) } // Padding for bottom nav
         }
     }
 }
@@ -129,7 +133,6 @@ fun HomeScreen(
 @Composable
 private fun HomeTopBar(
     onAgentControl: () -> Unit,
-    onSendPayment: () -> Unit,
     onSettings: () -> Unit,
 ) {
     Row(
@@ -143,11 +146,11 @@ private fun HomeTopBar(
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.weight(1f),
         )
-        CircleIconButton(onClick = onAgentControl) { Icon(Icons.Default.Memory, contentDescription = "Agent") }
+        CircleIconButton(onClick = onAgentControl) { Icon(Icons.Rounded.Memory, contentDescription = "Agent") }
         Spacer(Modifier.width(8.dp))
-        CircleIconButton(onClick = onSendPayment) { Icon(Icons.Default.Payment, contentDescription = "Pay") }
+        CircleIconButton(onClick = onSendPayment) { Icon(Icons.Rounded.Payment, contentDescription = "Pay") }
         Spacer(Modifier.width(8.dp))
-        CircleIconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
+        CircleIconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, contentDescription = "Settings") }
     }
 }
 
@@ -155,7 +158,7 @@ private fun HomeTopBar(
 private fun LiveAgentRow(isSyncing: Boolean, onClick: () -> Unit) {
     ChatRowShell(onClick = onClick) {
         AgentAvatar("H", active = true)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text("Hermes Agent", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -164,7 +167,7 @@ private fun LiveAgentRow(isSyncing: Boolean, onClick: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -172,16 +175,18 @@ private fun LiveAgentRow(isSyncing: Boolean, onClick: () -> Unit) {
 private fun AgentSessionRow(session: SessionEntity, onClick: () -> Unit) {
     ChatRowShell(onClick = onClick) {
         AgentAvatar("H", active = false)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 session.title?.takeIf { it.isNotBlank() } ?: "Hermes chat",
                 style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
             )
             Text(
                 "${session.messageCount} messages · ${session.model.ifBlank { session.source }}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
         Text(
@@ -198,15 +203,16 @@ private fun ChatRowShell(onClick: () -> Unit, content: @Composable RowScope.() -
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.64f))
+            .clip(RoundedCornerShape(28.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
             .border(
                 1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.22f),
-                RoundedCornerShape(24.dp),
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                RoundedCornerShape(28.dp),
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         content()
@@ -218,7 +224,7 @@ private fun AgentAvatar(label: String, active: Boolean) {
     Box {
         Box(
             modifier = Modifier
-                .size(52.dp)
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -241,12 +247,12 @@ private fun AgentAvatar(label: String, active: Boolean) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(14.dp)
+                    .size(16.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.background)
                     .padding(2.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
+                    .background(androidx.compose.ui.graphics.Color(0xFF4CAF50)), // Green dot for active
             )
         }
     }
@@ -257,7 +263,7 @@ private fun EmptyChatState(onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 28.dp, vertical = 38.dp),
+            .padding(horizontal = 28.dp, vertical = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("No synced chats", style = MaterialTheme.typography.titleMedium)
@@ -265,18 +271,19 @@ private fun EmptyChatState(onClick: () -> Unit) {
             "Start chat, then synced sessions appear here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 6.dp),
+            modifier = Modifier.padding(top = 8.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
         Text(
             "New chat",
             color = MaterialTheme.colorScheme.onPrimary,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier
-                .padding(top = 14.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .padding(top = 24.dp)
+                .clip(RoundedCornerShape(30.dp))
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = 24.dp, vertical = 14.dp),
         )
     }
 }
@@ -286,10 +293,10 @@ private fun CircleIconButton(onClick: () -> Unit, content: @Composable () -> Uni
     IconButton(
         onClick = onClick,
         modifier = Modifier
-            .size(42.dp)
+            .size(46.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f), CircleShape),
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), CircleShape),
     ) {
         content()
     }
@@ -300,3 +307,4 @@ private fun formatTimestamp(seconds: Long): String {
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochSecond(seconds))
 }
+

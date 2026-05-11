@@ -1,6 +1,10 @@
 package com.hermes.mobile.feature.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,7 +47,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.model.TokenUsage
@@ -52,11 +56,11 @@ import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.LottieConstants
 import com.airbnb.lottie.compose.rememberLottieComposition
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Payment
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 
@@ -64,7 +68,6 @@ import androidx.compose.material3.IconButton
 fun ChatShellScreen(
     onSessionsClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onSendPaymentClick: () -> Unit,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -93,7 +96,7 @@ fun ChatShellScreen(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 92.dp, bottom = 112.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { SessionStrip(state.sessionId, state.isConnecting, state.isStreaming) }
                 items(state.tools) { ToolChip(it) }
@@ -101,7 +104,11 @@ fun ChatShellScreen(
                     MessageBubble(message, onRetry = viewModel::retryLast)
                 }
                 item {
-                    AnimatedVisibility(visible = state.isConnecting) {
+                    AnimatedVisibility(
+                        visible = state.isConnecting,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
                         TypingRow("Connecting")
                     }
                 }
@@ -118,18 +125,17 @@ fun ChatShellScreen(
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(horizontal = 12.dp, vertical = 10.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
                     .border(
                         1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.28f),
-                        RoundedCornerShape(28.dp),
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                        RoundedCornerShape(32.dp),
                     )
             ) {
                 ChatTopBar(
                     onSessionsClick = onSessionsClick,
                     onSettingsClick = onSettingsClick,
-                    onSendPaymentClick = onSendPaymentClick,
                 )
             }
 
@@ -156,17 +162,16 @@ fun ChatShellScreen(
 private fun ChatTopBar(
     onSessionsClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onSendPaymentClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(46.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -180,19 +185,16 @@ private fun ChatTopBar(
         ) {
             Text("H", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text("Hermes", style = MaterialTheme.typography.titleMedium)
             Text("private agent", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = onSessionsClick) {
-            Icon(Icons.Default.History, contentDescription = "Sessions", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        IconButton(onClick = onSendPaymentClick) {
-            Icon(Icons.Default.Payment, contentDescription = "Send", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Rounded.History, contentDescription = "Sessions", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = onSettingsClick) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Rounded.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -208,10 +210,11 @@ private fun SessionStrip(sessionId: String?, isConnecting: Boolean, isStreaming:
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f), RoundedCornerShape(22.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(26.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(26.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -228,23 +231,23 @@ private fun MessageBubble(message: ChatUiMessage, onRetry: () -> Unit) {
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val textColor = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     val bubbleShape = if (outgoing) {
-        RoundedCornerShape(22.dp, 6.dp, 22.dp, 22.dp)
+        RoundedCornerShape(26.dp, 8.dp, 26.dp, 26.dp)
     } else {
-        RoundedCornerShape(6.dp, 22.dp, 22.dp, 22.dp)
+        RoundedCornerShape(8.dp, 26.dp, 26.dp, 26.dp)
     }
 
-    Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
+    Box(Modifier.fillMaxWidth().animateContentSize(), contentAlignment = alignment) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.84f)
+                .fillMaxWidth(0.85f)
                 .clip(bubbleShape)
-                .background(bubbleColor.copy(alpha = if (outgoing) 1f else 0.72f))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), bubbleShape)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .background(bubbleColor.copy(alpha = if (outgoing) 1f else 0.85f))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), bubbleShape)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             if (!outgoing) {
                 Text("Hermes", style = MaterialTheme.typography.labelLarge, color = textColor)
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(4.dp))
             }
             Text(
                 text = message.content + if (message.isStreaming) " |" else "",
@@ -260,14 +263,14 @@ private fun MessageBubble(message: ChatUiMessage, onRetry: () -> Unit) {
                     modifier = Modifier
                         .align(Alignment.End)
                         .clickable(onClick = onRetry)
-                        .padding(top = 6.dp),
+                        .padding(top = 8.dp),
                 )
             }
             Text(
                 message.time,
                 style = MaterialTheme.typography.bodyMedium,
                 color = textColor.copy(alpha = 0.66f),
-                modifier = Modifier.align(Alignment.End),
+                modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
             )
         }
     }
@@ -279,7 +282,7 @@ private fun UsageLine(usage: TokenUsage, color: Color) {
         text = "${usage.promptTokens} in / ${usage.completionTokens} out / ${usage.totalTokens} total",
         style = MaterialTheme.typography.bodyMedium,
         color = color.copy(alpha = 0.66f),
-        modifier = Modifier.padding(top = 6.dp),
+        modifier = Modifier.padding(top = 8.dp),
     )
 }
 
@@ -287,14 +290,15 @@ private fun UsageLine(usage: TokenUsage, color: Color) {
 private fun ToolChip(progress: ToolProgress) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.70f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f), RoundedCornerShape(18.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Dot()
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         Text(progress.label, style = MaterialTheme.typography.bodyMedium)
         progress.status?.let {
             Text("  $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -306,10 +310,10 @@ private fun ToolChip(progress: ToolProgress) {
 private fun TypingRow(label: String) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(com.hermes.mobile.R.raw.typing_dots))
@@ -318,7 +322,7 @@ private fun TypingRow(label: String) {
             iterations = LottieConstants.IterateForever,
             modifier = Modifier.size(48.dp, 24.dp),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -328,9 +332,9 @@ private fun InlineError(message: String, onRetry: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -338,9 +342,9 @@ private fun InlineError(message: String, onRetry: () -> Unit) {
             "Retry",
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .clickable(onClick = onRetry)
-                .padding(8.dp),
+                .padding(10.dp),
         )
     }
 }
@@ -356,10 +360,10 @@ private fun Composer(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.26f), RoundedCornerShape(28.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(32.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(32.dp))
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicTextField(
@@ -373,9 +377,9 @@ private fun Composer(
             ),
             modifier = Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(24.dp))
-                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.72f))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .clip(RoundedCornerShape(28.dp))
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.6f))
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             decorationBox = { inner ->
                 if (value.isEmpty()) {
                     Text(if (isStreaming) "Hermes is responding" else "Message Hermes", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -383,12 +387,12 @@ private fun Composer(
                 inner()
             },
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         IconButton(
             onClick = if (isStreaming) onStop else onSend,
             enabled = isStreaming || value.isNotBlank(),
             modifier = Modifier
-                .size(44.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(
                     if (isStreaming || value.isNotBlank()) {
@@ -399,7 +403,7 @@ private fun Composer(
                 ),
         ) {
             Icon(
-                imageVector = if (isStreaming) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                imageVector = if (isStreaming) Icons.Rounded.Stop else Icons.AutoMirrored.Rounded.Send,
                 contentDescription = if (isStreaming) "Stop" else "Send",
                 tint = if (isStreaming || value.isNotBlank()) {
                     MaterialTheme.colorScheme.onPrimary
@@ -415,7 +419,7 @@ private fun Composer(
 private fun Dot() {
     Box(
         modifier = Modifier
-            .size(6.dp)
+            .size(8.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primary),
     )

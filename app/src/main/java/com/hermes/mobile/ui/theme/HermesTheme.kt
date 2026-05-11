@@ -14,7 +14,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.TextStyle
@@ -50,6 +49,49 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF1E1E1E),
     onSurfaceVariant = Color(0xFFC7C7C7),
     outline = Color(0xFF333333),
+)
+
+
+private val SepiaColors = lightColorScheme(
+    primary = Color(0xFF5A4634),
+    onPrimary = Color(0xFFF4ECD8),
+    secondary = Color(0xFF7A614A),
+    onSecondary = Color(0xFFF4ECD8),
+    background = Color(0xFFF4ECD8),
+    onBackground = Color(0xFF433422),
+    surface = Color(0xFFEAE0C8),
+    onSurface = Color(0xFF433422),
+    surfaceVariant = Color(0xFFDED0B6),
+    onSurfaceVariant = Color(0xFF5A4634),
+    outline = Color(0xFFC4B49E),
+)
+
+private val NordColors = darkColorScheme(
+    primary = Color(0xFF88C0D0),
+    onPrimary = Color(0xFF2E3440),
+    secondary = Color(0xFF81A1C1),
+    onSecondary = Color(0xFF2E3440),
+    background = Color(0xFF2E3440),
+    onBackground = Color(0xFFECEFF4),
+    surface = Color(0xFF3B4252),
+    onSurface = Color(0xFFECEFF4),
+    surfaceVariant = Color(0xFF434C5E),
+    onSurfaceVariant = Color(0xFFD8DEE9),
+    outline = Color(0xFF4C566A),
+)
+
+private val CatppuccinColors = darkColorScheme(
+    primary = Color(0xFFCBA6F7),
+    onPrimary = Color(0xFF1E1E2E),
+    secondary = Color(0xFFF5C2E7),
+    onSecondary = Color(0xFF1E1E2E),
+    background = Color(0xFF1E1E2E),
+    onBackground = Color(0xFFCDD6F4),
+    surface = Color(0xFF313244),
+    onSurface = Color(0xFFCDD6F4),
+    surfaceVariant = Color(0xFF45475A),
+    onSurfaceVariant = Color(0xFFA6ADC8),
+    outline = Color(0xFF585B70),
 )
 
 private val HermesTypography = Typography(
@@ -92,15 +134,21 @@ fun HermesTheme(
 ) {
     val darkTheme = when (themeMode) {
         ThemeMode.System -> isSystemInDarkTheme()
-        ThemeMode.Light -> false
-        ThemeMode.Dark -> true
+        ThemeMode.Light, ThemeMode.Sepia -> false
+        ThemeMode.Dark, ThemeMode.Nord, ThemeMode.Catppuccin -> true
     }
-    val colors: ColorScheme = if (darkTheme) DarkColors else LightColors
+    val colors: ColorScheme = when (themeMode) {
+        ThemeMode.System -> if (darkTheme) DarkColors else LightColors
+        ThemeMode.Light -> LightColors
+        ThemeMode.Dark -> DarkColors
+        ThemeMode.Sepia -> SepiaColors
+        ThemeMode.Nord -> NordColors
+        ThemeMode.Catppuccin -> CatppuccinColors
+    }
     MaterialTheme(
         colorScheme = colors,
         typography = HermesTypography,
     ) {
-        val background = MaterialTheme.colorScheme.background
         val view = LocalView.current
         DisposableEffect(darkTheme) {
             val window = (view.context as? Activity)?.window
@@ -112,18 +160,17 @@ fun HermesTheme(
             }
             onDispose { }
         }
-        val backgroundBrush = if (darkTheme) {
-            Brush.linearGradient(
-                colors = listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)),
-                start = Offset(0f, 0f),
-                end = Offset.Infinite
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(Color(0xFFD4FC79), Color(0xFF96E6A1)),
-                start = Offset(0f, 0f),
-                end = Offset.Infinite
-            )
+        val backgroundBrush = when (themeMode) {
+            ThemeMode.Sepia -> Brush.verticalGradient(listOf(Color(0xFFF9F5EC), Color(0xFFEBE0C8)))
+            ThemeMode.Nord -> Brush.verticalGradient(listOf(Color(0xFF3B4252), Color(0xFF2E3440)))
+            ThemeMode.Catppuccin -> Brush.verticalGradient(listOf(Color(0xFF313244), Color(0xFF1E1E2E)))
+            ThemeMode.Light -> Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFF1F1EF)))
+            ThemeMode.Dark -> Brush.verticalGradient(listOf(Color(0xFF171717), Color(0xFF050505)))
+            ThemeMode.System -> if (darkTheme) {
+                Brush.verticalGradient(listOf(Color(0xFF171717), Color(0xFF050505)))
+            } else {
+                Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFF1F1EF)))
+            }
         }
 
         Box(

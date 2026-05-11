@@ -55,7 +55,13 @@ class SessionListViewModel @Inject constructor(
         viewModelScope.launch {
             controls.update { it.copy(isSyncing = true, error = null) }
             repository.syncSessions()
-                .onFailure { error -> controls.update { it.copy(error = error.message ?: "Sync failed") } }
+                .onFailure { error ->
+                    val msg = error.message ?: "Sync failed"
+                    // Gracefully ignore 404 — backend may not support Hermes session endpoints
+                    if (!msg.contains("404")) {
+                        controls.update { it.copy(error = msg) }
+                    }
+                }
             controls.update { it.copy(isSyncing = false) }
         }
     }
