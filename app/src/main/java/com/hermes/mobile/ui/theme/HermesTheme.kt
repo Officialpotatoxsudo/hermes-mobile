@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.TextStyle
@@ -110,10 +112,24 @@ fun HermesTheme(
             }
             onDispose { }
         }
+        val backgroundBrush = if (darkTheme) {
+            Brush.linearGradient(
+                colors = listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)),
+                start = Offset(0f, 0f),
+                end = Offset.Infinite
+            )
+        } else {
+            Brush.linearGradient(
+                colors = listOf(Color(0xFFD4FC79), Color(0xFF96E6A1)),
+                start = Offset(0f, 0f),
+                end = Offset.Infinite
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(background),
+                .background(backgroundBrush),
         ) {
             content()
         }

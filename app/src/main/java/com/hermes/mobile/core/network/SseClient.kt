@@ -2,6 +2,7 @@ package com.hermes.mobile.core.network
 
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.model.ChatCompletionRequest
+import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.model.TokenUsage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow

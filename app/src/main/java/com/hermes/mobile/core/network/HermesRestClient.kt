@@ -7,6 +7,7 @@ import com.hermes.mobile.core.model.SendPaymentResponse
 import com.hermes.mobile.core.model.SessionsResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -66,6 +67,21 @@ class HermesRestClient @Inject constructor(
     suspend fun putText(path: String, body: String): Result<String> = sendText("PUT", path, body)
 
     suspend fun postText(path: String, body: String): Result<String> = sendText("POST", path, body)
+
+    suspend fun sendPayment(request: SendPaymentRequest): Result<SendPaymentResponse> = withContext(Dispatchers.IO) {
+        runCatching {
+            val requestBody = json.encodeToString(request).toRequestBody("application/json; charset=utf-8".toMediaType())
+            val httpRequest = Request.Builder()
+                .url(tokenStore.serverUrl.endpoint("v1/payments"))
+                .applyBearer(tokenStore.apiKey)
+                .post(requestBody)
+                .build()
+            client.newCall(httpRequest).execute().use { response ->
+                if (!response.isSuccessful) error("POST /v1/payments failed: HTTP ${response.code}")
+                json.decodeFromString<SendPaymentResponse>(response.body.string())
+            }
+        }
+    }
 
     private suspend fun sendText(method: String, path: String, body: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {

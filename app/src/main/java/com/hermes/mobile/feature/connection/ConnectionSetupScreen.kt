@@ -3,6 +3,7 @@ package com.hermes.mobile.feature.connection
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,8 +12,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -42,6 +47,12 @@ fun ConnectionSetupScreen(
             .padding(horizontal = 24.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.Bottom,
     ) {
+        Icon(
+            imageVector = Icons.Default.Link,
+            contentDescription = null,
+            tint = colors.primary,
+            modifier = Modifier.padding(bottom = 12.dp),
+        )
         Text(
             text = "Hermes",
             style = MaterialTheme.typography.headlineMedium,
@@ -76,12 +87,22 @@ fun ConnectionSetupScreen(
             )
         }
         if (state.isHealthy) {
-            Text(
-                text = "Connection verified",
-                color = colors.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 10.dp),
-            )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = androidx.compose.ui.graphics.Color(0xFF4CAF50),
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                Text(
+                    text = "Connection verified",
+                    color = colors.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
         Button(
             onClick = { viewModel.checkAndSave(onContinue) },

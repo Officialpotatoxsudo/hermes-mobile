@@ -5,7 +5,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
+
+import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -36,19 +38,20 @@ class MainActivity : FragmentActivity() {
         setContent {
             val themeMode by appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.System)
             HermesTheme(themeMode = themeMode) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .safeDrawingPadding(),
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
                 ) {
-                    HermesNavGraph(
-                        hasCredentials = tokenStore.hasCredentials(),
-                        isUnlocked = isUnlocked,
-                        onUnlocked = {
-                            appLockManager.unlock()
-                            isUnlocked = true
-                        },
-                    )
+                    Box {
+                        HermesNavGraph(
+                            hasCredentials = tokenStore.hasCredentials(),
+                            isUnlocked = isUnlocked,
+                            onUnlocked = {
+                                appLockManager.unlock()
+                                isUnlocked = true
+                            },
+                        )
+                    }
                 }
             }
         }
