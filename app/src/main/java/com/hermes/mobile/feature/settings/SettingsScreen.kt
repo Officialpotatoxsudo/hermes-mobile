@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -36,7 +39,6 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onEditConnection: () -> Unit,
     onAgentControl: () -> Unit,
-    onSendPayment: () -> Unit = {},
     onLogout: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -46,12 +48,16 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
             .padding(16.dp),
     ) {
         Header(title = "Settings", action = "Done", onAction = onBack)
         Spacer(Modifier.height(24.dp))
-        SettingRow("Theme", "Choose app color mode") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingItem("Theme", "Choose app color mode") {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 ThemeMode.entries.forEach { mode ->
                     Chip(
                         text = mode.name,
@@ -66,7 +72,6 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
         ClickRow("Agent control", "Memory, profiles, tools, skills, schedules", onAgentControl)
         Spacer(Modifier.height(14.dp))
-        ClickRow("Send Payment", "Send MATIC or tokens", onSendPayment)
         Spacer(Modifier.height(32.dp))
         Text("Danger zone", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 4.dp))
         Spacer(Modifier.height(10.dp))
@@ -113,20 +118,18 @@ private fun Header(title: String, action: String, onAction: () -> Unit) {
 }
 
 @Composable
-private fun SettingRow(title: String, subtitle: String, trailing: @Composable () -> Unit) {
-    Row(
+private fun SettingItem(title: String, subtitle: String, content: @Composable () -> Unit) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
             .padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        trailing()
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        content()
     }
 }
 

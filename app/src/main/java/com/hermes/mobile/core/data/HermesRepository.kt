@@ -5,8 +5,7 @@ import com.hermes.mobile.core.data.local.MessageEntity
 import com.hermes.mobile.core.data.local.SessionDao
 import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.core.model.ChatCompletionRequest
-import com.hermes.mobile.core.model.SendPaymentRequest
-import com.hermes.mobile.core.model.SendPaymentResponse
+import com.hermes.mobile.core.model.DashboardModelOptionsResponse
 import com.hermes.mobile.core.model.SessionDto
 import com.hermes.mobile.core.model.SessionMessageDto
 import com.hermes.mobile.core.network.HermesRestClient
@@ -45,6 +44,8 @@ class HermesRepository @Inject constructor(
         }
     }
 
+    suspend fun fetchModelOptions(): Result<DashboardModelOptionsResponse> = restClient.fetchModelOptions()
+
     fun streamChat(request: ChatCompletionRequest): Flow<SseEvent> = sseClient.streamChat(request)
 
     suspend fun getText(path: String): Result<String> = restClient.getText(path)
@@ -52,8 +53,6 @@ class HermesRepository @Inject constructor(
     suspend fun putText(path: String, body: String): Result<String> = restClient.putText(path, body)
 
     suspend fun postText(path: String, body: String): Result<String> = restClient.postText(path, body)
-
-    suspend fun sendPaymentRequest(request: SendPaymentRequest): Result<SendPaymentResponse> = restClient.sendPayment(request)
 }
 
 private fun SessionDto.toEntity(): SessionEntity {

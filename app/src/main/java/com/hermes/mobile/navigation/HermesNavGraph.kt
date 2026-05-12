@@ -9,11 +9,15 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChatBubble
@@ -21,16 +25,21 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -105,30 +114,53 @@ fun HermesNavGraph(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = 28.dp, vertical = 8.dp),
                 ) {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                        tonalElevation = 8.dp,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(32.dp))
+                            .clip(RoundedCornerShape(34.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.68f))
                             .border(
                                 1.dp,
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                                RoundedCornerShape(32.dp),
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+                                RoundedCornerShape(34.dp),
                             )
-                            .padding(horizontal = 8.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         mainTabs.forEach { tab ->
-                            NavigationBarItem(
-                                selected = currentRoute == tab.route,
-                                onClick = { navController.navigateMainTab(tab.route) },
-                                icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                label = { Text(tab.label) },
-                                alwaysShowLabel = true
-                            )
+                            val selected = currentRoute == tab.route
+                            val color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(28.dp))
+                                    .background(
+                                        if (selected) {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                                        } else {
+                                            androidx.compose.ui.graphics.Color.Transparent
+                                        },
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = { navController.navigateMainTab(tab.route) },
+                                    )
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Icon(tab.icon, contentDescription = tab.label, tint = color, modifier = Modifier.padding(bottom = 3.dp))
+                                Text(tab.label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 11.sp), color = color)
+                            }
                         }
                     }
                 }
@@ -139,7 +171,9 @@ fun HermesNavGraph(
             NavHost(
                 navController = navController,
                 startDestination = startDestination,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
                 enterTransition = {
                     slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(400)) + fadeIn(animationSpec = tween(400))
                 },
@@ -186,6 +220,12 @@ fun HermesNavGraph(
                         onSettingsClick = { navController.navigateMainTab(Routes.Settings) },
                     )
                 }
+                composable("${Routes.Chat}/{sessionId}") {
+                    ChatShellScreen(
+                        onSessionsClick = { navController.navigate(Routes.Sessions) },
+                        onSettingsClick = { navController.navigateMainTab(Routes.Settings) },
+                    )
+                }
                 composable(Routes.Sessions) {
                     SessionListScreen(
                         onBack = { navController.navigate(Routes.Home) },
@@ -193,7 +233,10 @@ fun HermesNavGraph(
                     )
                 }
                 composable("${Routes.SessionHistory}/{sessionId}") {
-                    SessionHistoryScreen(onBack = { navController.popBackStack() })
+                    SessionHistoryScreen(
+                        onBack = { navController.popBackStack() },
+                        onContinue = { sessionId -> navController.navigate("${Routes.Chat}/$sessionId") },
+                    )
                 }
                 composable(Routes.Settings) {
                     SettingsScreen(

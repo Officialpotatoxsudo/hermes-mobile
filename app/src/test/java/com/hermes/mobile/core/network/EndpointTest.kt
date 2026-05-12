@@ -16,4 +16,12 @@ class EndpointTest {
             "https://agent.example".endpoint("v1/sessions?limit=50&offset=0"),
         )
     }
+
+    @Test
+    fun endpointDoesNotDuplicateV1WhenBaseAlreadyIncludesIt() {
+        assertEquals(
+            "https://agent.example/v1/chat/completions",
+            "https://agent.example/v1".endpoint("v1/chat/completions"),
+        )
+    }
 }

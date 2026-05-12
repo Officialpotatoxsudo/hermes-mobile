@@ -12,14 +12,14 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 enum class AgentEndpoint(val title: String, val path: String, val writable: Boolean) {
-    Memory("MEMORY.md", "v1/agent/memory", true),
-    User("USER.md", "v1/agent/user", true),
-    Soul("SOUL.md", "v1/agent/soul", true),
-    Profiles("Profiles", "v1/agent/profiles", true),
-    Tools("Tools", "v1/tools", true),
-    Skills("Skills", "v1/skills", true),
-    Schedules("Schedules", "v1/schedules", true),
-    Gateways("Gateways", "v1/gateways", true),
+    Memory("MEMORY.md", "agent/memory", true),
+    User("USER.md", "agent/user", true),
+    Soul("SOUL.md", "agent/soul", true),
+    Profiles("Profiles", "agent/profiles", true),
+    Tools("Tools", "tools", true),
+    Skills("Skills", "skills", true),
+    Schedules("Schedules", "schedules", true),
+    Gateways("Gateways", "gateways", true),
 }
 
 data class AgentControlUiState(

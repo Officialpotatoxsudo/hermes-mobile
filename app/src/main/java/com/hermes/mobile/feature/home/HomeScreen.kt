@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -25,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Payment
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
@@ -60,54 +60,50 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.background,
-                    ),
-                ),
-            ),
-    ) {
-        HomeTopBar(
-            onAgentControl = onAgentControl,
-            onSendPayment = onSendPayment,
-            onSettings = onSettings,
-        )
-        OutlinedTextField(
-            value = state.query,
-            onValueChange = viewModel::onQueryChanged,
-            leadingIcon = {
-                Icon(Icons.Rounded.Search, contentDescription = null)
-            },
-            placeholder = { Text("Search chats") },
-            singleLine = true,
-            shape = RoundedCornerShape(22.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
-                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
-            ),
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-        )
-        state.error?.let {
-            Text(
-                it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                .statusBarsPadding()
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+        ) {
+            HomeTopBar(
+                onAgentControl = onAgentControl,
+                onSettings = onSettings,
             )
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = viewModel::onQueryChanged,
+                leadingIcon = {
+                    Icon(Icons.Rounded.Search, contentDescription = null)
+                },
+                placeholder = { Text("Search chats") },
+                singleLine = true,
+                shape = RoundedCornerShape(28.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+            state.error?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                )
+            }
         }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .animateContentSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 14.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
@@ -125,7 +121,7 @@ fun HomeScreen(
                     AgentSessionRow(session, onClick = { onSessionClick(session.id) })
                 }
             }
-            item { Spacer(Modifier.height(100.dp)) } // Padding for bottom nav
+            item { Spacer(Modifier.height(40.dp)) }
         }
     }
 }
@@ -147,8 +143,6 @@ private fun HomeTopBar(
             modifier = Modifier.weight(1f),
         )
         CircleIconButton(onClick = onAgentControl) { Icon(Icons.Rounded.Memory, contentDescription = "Agent") }
-        Spacer(Modifier.width(8.dp))
-        CircleIconButton(onClick = onSendPayment) { Icon(Icons.Rounded.Payment, contentDescription = "Pay") }
         Spacer(Modifier.width(8.dp))
         CircleIconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, contentDescription = "Settings") }
     }
@@ -252,7 +246,7 @@ private fun AgentAvatar(label: String, active: Boolean) {
                     .background(MaterialTheme.colorScheme.background)
                     .padding(2.dp)
                     .clip(CircleShape)
-                    .background(androidx.compose.ui.graphics.Color(0xFF4CAF50)), // Green dot for active
+                    .background(MaterialTheme.colorScheme.primary),
             )
         }
     }
@@ -307,4 +301,3 @@ private fun formatTimestamp(seconds: Long): String {
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochSecond(seconds))
 }
-
