@@ -36,15 +36,16 @@ class SseClient @Inject constructor(
     private val tokenStore: TokenStore,
     private val json: Json,
 ) {
-    fun streamChat(request: ChatCompletionRequest): Flow<SseEvent> = callbackFlow {
+    fun streamChat(request: ChatCompletionRequest, sessionId: String? = null): Flow<SseEvent> = callbackFlow {
         val parser = SsePayloadParser(json)
         val streamingClient = client.newBuilder()
-            .readTimeout(0, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)
             .build()
         val body = json.encodeToString(request).toRequestBody("application/json".toMediaType())
         val httpRequest = Request.Builder()
             .url(tokenStore.serverUrl.endpoint("v1/chat/completions"))
             .applyBearer(tokenStore.apiKey)
+            .applyHermesSessionHeaders(sessionId, tokenStore.apiKey)
             .header("Accept", "text/event-stream")
             .post(body)
             .build()
@@ -84,6 +85,17 @@ class SseClient @Inject constructor(
                         close()
                         return
                     }
+                    if (response?.isProxyLike() == true || t?.message?.contains("content-type", ignoreCase = true) == true) {
+                        runCatching {
+                            executeNonStreaming(request, sessionId, parser)
+                        }.onSuccess { events ->
+                            events.forEach { trySend(it) }
+                            close()
+                        }.onFailure { fallbackError ->
+                            close(IOException(fallbackError.message ?: "Non-streaming fallback failed", fallbackError))
+                        }
+                        return
+                    }
 
                     val cause = t ?: IOException("SSE failed: HTTP ${response?.code ?: "unknown"}")
                     val readable = when {
@@ -108,4 +120,54 @@ class SseClient @Inject constructor(
 
         awaitClose { source.cancel() }
     }
+
+    private fun executeNonStreaming(
+        request: ChatCompletionRequest,
+        sessionId: String?,
+        parser: SsePayloadParser,
+    ): List<SseEvent> {
+        val body = json.encodeToString(request.copy(stream = false)).toRequestBody("application/json".toMediaType())
+        val httpRequest = Request.Builder()
+            .url(tokenStore.serverUrl.endpoint("v1/chat/completions"))
+            .applyBearer(tokenStore.apiKey)
+            .applyHermesSessionHeaders(sessionId, tokenStore.apiKey)
+            .post(body)
+            .build()
+        client.newCall(httpRequest).execute().use { response ->
+            val bodyText = response.body.string()
+            if (!response.isSuccessful) {
+                error("Server error HTTP ${response.code}: ${parser.parseError(bodyText)}")
+            }
+            val completion = parser.parseCompletion(bodyText) ?: error("Server returned unreadable response")
+            val text = completion.choices.firstOrNull()?.message?.content
+                ?: completion.choices.firstOrNull()?.text
+                ?: ""
+            return buildList {
+                add(SseEvent.Opened(response.header("x-hermes-session-id")))
+                if (text.isNotBlank()) add(SseEvent.Delta(text))
+                completion.usage?.let { add(SseEvent.Usage(it)) }
+                add(SseEvent.Done)
+            }
+        }
+    }
+}
+
+private fun Response.isProxyLike(): Boolean {
+    val headerText = headers.joinToString("\n") { "${it.first}: ${it.second}" }.lowercase()
+    return "ngrok" in headerText ||
+        "cloudflare" in headerText ||
+        "cf-ray" in headerText ||
+        "cloudfront" in headerText ||
+        "x-vercel" in headerText ||
+        "fly-request-id" in headerText
+}
+
+fun Request.Builder.applyHermesSessionHeaders(sessionId: String?, apiKey: String): Request.Builder {
+    val cleanSessionId = sessionId?.trim().orEmpty()
+    if (cleanSessionId.isBlank()) return this
+    header("X-Hermes-Session-Id", cleanSessionId)
+    if (apiKey.isNotBlank()) {
+        header("X-Hermes-Session-Key", "mobile:${cleanSessionId.take(240)}")
+    }
+    return this
 }

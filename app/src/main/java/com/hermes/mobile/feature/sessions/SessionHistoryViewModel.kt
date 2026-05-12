@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.data.HermesRepository
 import com.hermes.mobile.core.data.local.MessageEntity
+import com.hermes.mobile.core.error.ErrorMapper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -43,7 +44,7 @@ class SessionHistoryViewModel @Inject constructor(
             controls.update { it.copy(isSyncing = true, error = null) }
             repository.syncMessages(sessionId)
                 .onFailure { error ->
-                    val msg = error.message ?: "Sync failed"
+                    val msg = ErrorMapper.userMessage(error, "Sync failed")
                     if (!msg.contains("404")) {
                         controls.update { it.copy(error = msg) }
                     }

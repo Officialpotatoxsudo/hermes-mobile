@@ -37,6 +37,10 @@ class MainActivity : FragmentActivity() {
         isUnlocked = appLockManager.isUnlocked
         setContent {
             val themeMode by appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.System)
+            val lockTimeout by appPreferences.lockTimeout.collectAsStateWithLifecycle(
+                initialValue = com.hermes.mobile.core.settings.LockTimeout.FiveMinutes,
+            )
+            appLockManager.setLockTimeout(lockTimeout.millis)
             HermesTheme(themeMode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

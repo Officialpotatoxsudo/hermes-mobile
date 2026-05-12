@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.data.HermesRepository
 import com.hermes.mobile.core.data.local.SessionEntity
+import com.hermes.mobile.core.error.ErrorMapper
+import com.hermes.mobile.core.settings.AgentProfile
+import com.hermes.mobile.core.settings.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,16 +22,21 @@ data class SessionListUiState(
     val isSyncing: Boolean = false,
     val error: String? = null,
     val sessions: List<SessionEntity> = emptyList(),
+    val agents: List<AgentProfile> = AppPreferences.defaultAgents,
 )
 
 @HiltViewModel
 class SessionListViewModel @Inject constructor(
     private val repository: HermesRepository,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val controls = MutableStateFlow(SessionListUiState())
 
-    val uiState: StateFlow<SessionListUiState> = repository.sessions("")
-        .combine(controls) { sessions, current ->
+    val uiState: StateFlow<SessionListUiState> = combine(
+        repository.sessions(""),
+        appPreferences.agents,
+        controls,
+    ) { sessions, agents, current ->
             val query = current.query.trim()
             val filtered = if (query.isBlank()) {
                 sessions
@@ -36,10 +44,10 @@ class SessionListViewModel @Inject constructor(
                 sessions.filter { session ->
                     session.title.orEmpty().contains(query, ignoreCase = true) ||
                         session.source.contains(query, ignoreCase = true) ||
-                        session.model.contains(query, ignoreCase = true)
+                    session.model.contains(query, ignoreCase = true)
                 }
             }
-            current.copy(sessions = filtered)
+            current.copy(sessions = filtered, agents = agents)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 
@@ -56,13 +64,19 @@ class SessionListViewModel @Inject constructor(
             controls.update { it.copy(isSyncing = true, error = null) }
             repository.syncSessions()
                 .onFailure { error ->
-                    val msg = error.message ?: "Sync failed"
+                    val msg = ErrorMapper.userMessage(error, "Sync failed")
                     // Gracefully ignore 404 — backend may not support Hermes session endpoints
                     if (!msg.contains("404")) {
                         controls.update { it.copy(error = msg) }
                     }
                 }
             controls.update { it.copy(isSyncing = false) }
+        }
+    }
+
+    fun addAgent(name: String, subtitle: String) {
+        viewModelScope.launch {
+            appPreferences.addAgent(name, subtitle)
         }
     }
 }

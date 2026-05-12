@@ -28,6 +28,32 @@ class HermesRepository @Inject constructor(
 
     fun messages(sessionId: String): Flow<List<MessageEntity>> = messageDao.getBySessionIdFlow(sessionId)
 
+    suspend fun latestSession(): SessionEntity? = sessionDao.latest()
+
+    suspend fun cachedMessages(sessionId: String): List<MessageEntity> = messageDao.getBySessionId(sessionId)
+
+    suspend fun saveLocalSession(session: SessionEntity) {
+        sessionDao.upsert(session)
+    }
+
+    suspend fun saveLocalMessage(message: MessageEntity) {
+        messageDao.upsert(message)
+    }
+
+    suspend fun saveLocalMessages(messages: List<MessageEntity>) {
+        messageDao.upsertAll(messages)
+    }
+
+    suspend fun deleteLocalMessages(messageIds: List<Long>) {
+        if (messageIds.isNotEmpty()) {
+            messageDao.deleteByIds(messageIds)
+        }
+    }
+
+    suspend fun deleteLocalSession(sessionId: String) {
+        sessionDao.deleteById(sessionId)
+    }
+
     suspend fun checkHealth(serverUrl: String, apiKey: String): Result<Unit> {
         return restClient.checkHealth(serverUrl, apiKey)
     }
@@ -46,13 +72,17 @@ class HermesRepository @Inject constructor(
 
     suspend fun fetchModelOptions(): Result<DashboardModelOptionsResponse> = restClient.fetchModelOptions()
 
-    fun streamChat(request: ChatCompletionRequest): Flow<SseEvent> = sseClient.streamChat(request)
+    fun streamChat(request: ChatCompletionRequest, sessionId: String? = null): Flow<SseEvent> {
+        return sseClient.streamChat(request, sessionId)
+    }
 
     suspend fun getText(path: String): Result<String> = restClient.getText(path)
 
     suspend fun putText(path: String, body: String): Result<String> = restClient.putText(path, body)
 
     suspend fun postText(path: String, body: String): Result<String> = restClient.postText(path, body)
+
+    suspend fun deleteText(path: String): Result<String> = restClient.deleteText(path)
 }
 
 private fun SessionDto.toEntity(): SessionEntity {

@@ -6,6 +6,7 @@ import com.hermes.mobile.core.model.DashboardModelInfoResponse
 import com.hermes.mobile.core.model.DashboardModelOptionsResponse
 import com.hermes.mobile.core.model.DashboardSessionsResponse
 import com.hermes.mobile.core.model.MessagesResponse
+import com.hermes.mobile.core.model.OpenAiModelsResponse
 import com.hermes.mobile.core.model.SessionsResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,19 +66,40 @@ class HermesRestClient @Inject constructor(
             }
             val infoRequest = authenticatedRequest("api/model/info")
             client.newCall(infoRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val info = json.decodeFromString<DashboardModelInfoResponse>(response.body.string())
+                    return@runCatching DashboardModelOptionsResponse(
+                        providers = listOf(
+                            com.hermes.mobile.core.model.DashboardProviderDto(
+                                slug = info.provider,
+                                name = info.provider,
+                                isCurrent = true,
+                                models = listOf(info.model).filter { it.isNotBlank() },
+                            ),
+                        ),
+                        model = info.model,
+                        provider = info.provider,
+                    )
+                }
+                if (response.code != 404) error("Model options failed: HTTP ${response.code}")
+            }
+
+            val modelsRequest = authenticatedRequest("v1/models")
+            client.newCall(modelsRequest).execute().use { response ->
                 if (!response.isSuccessful) error("Model options failed: HTTP ${response.code}")
-                val info = json.decodeFromString<DashboardModelInfoResponse>(response.body.string())
+                val models = json.decodeFromString<OpenAiModelsResponse>(response.body.string())
+                val ids = models.data.map { it.id }.filter { it.isNotBlank() }.ifEmpty { listOf("hermes-agent") }
                 DashboardModelOptionsResponse(
                     providers = listOf(
                         com.hermes.mobile.core.model.DashboardProviderDto(
-                            slug = info.provider,
-                            name = info.provider,
+                            slug = "hermes",
+                            name = "Hermes",
                             isCurrent = true,
-                            models = listOf(info.model).filter { it.isNotBlank() },
+                            models = ids,
                         ),
                     ),
-                    model = info.model,
-                    provider = info.provider,
+                    model = ids.first(),
+                    provider = "hermes",
                 )
             }
         }
@@ -105,25 +127,7 @@ class HermesRestClient @Inject constructor(
     suspend fun getText(path: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanPath = path.trimStart('/')
-            if (cleanPath.startsWith("v1/") || cleanPath.startsWith("api/")) {
-                client.newCall(authenticatedRequest(cleanPath)).execute().use { response ->
-                    if (!response.isSuccessful) error("GET /$cleanPath failed: HTTP ${response.code}")
-                    response.body.string()
-                }
-            } else {
-                // Try api/ first
-                val apiRequest = authenticatedRequest("api/$cleanPath")
-                client.newCall(apiRequest).execute().use { response ->
-                    if (response.isSuccessful) return@runCatching response.body.string()
-                    if (response.code != 404) error("GET /api/$cleanPath failed: HTTP ${response.code}")
-                }
-                // Fallback to v1/
-                val v1Request = authenticatedRequest("v1/$cleanPath")
-                client.newCall(v1Request).execute().use { response ->
-                    if (!response.isSuccessful) error("GET /v1/$cleanPath failed: HTTP ${response.code}")
-                    response.body.string()
-                }
-            }
+            executeRequest("GET", cleanPath, null)
         }
     }
 
@@ -131,47 +135,48 @@ class HermesRestClient @Inject constructor(
 
     suspend fun postText(path: String, body: String): Result<String> = sendText("POST", path, body)
 
-    private suspend fun sendText(method: String, path: String, body: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun deleteText(path: String): Result<String> = sendText("DELETE", path, null)
+
+    private suspend fun sendText(method: String, path: String, body: String?): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanPath = path.trimStart('/')
-            val requestBody = body.toRequestBody("application/json; charset=utf-8".toMediaType())
-            
-            if (cleanPath.startsWith("v1/") || cleanPath.startsWith("api/")) {
-                val request = Request.Builder()
-                    .url(tokenStore.serverUrl.endpoint(cleanPath))
-                    .applyBearer(tokenStore.apiKey)
-                    .method(method, requestBody)
-                    .build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) error("$method /$cleanPath failed: HTTP ${response.code}")
-                    response.body.string()
-                }
-            } else {
-                // Try api/ first
-                val apiRequest = Request.Builder()
-                    .url(tokenStore.serverUrl.endpoint("api/$cleanPath"))
-                    .applyBearer(tokenStore.apiKey)
-                    .method(method, requestBody)
-                    .build()
-                client.newCall(apiRequest).execute().use { response ->
-                    if (response.isSuccessful) return@runCatching response.body.string()
-                    if (response.code != 404) error("$method /api/$cleanPath failed: HTTP ${response.code}")
-                }
-                // Fallback to v1/
-                val v1Request = Request.Builder()
-                    .url(tokenStore.serverUrl.endpoint("v1/$cleanPath"))
-                    .applyBearer(tokenStore.apiKey)
-                    .method(method, requestBody)
-                    .build()
-                client.newCall(v1Request).execute().use { response ->
-                    if (!response.isSuccessful) error("$method /v1/$cleanPath failed: HTTP ${response.code}")
-                    response.body.string()
-                }
-            }
+            executeRequest(method, cleanPath, body)
         }
     }
 
+    private fun executeRequest(method: String, cleanPath: String, body: String?): String {
+        val paths = when {
+            cleanPath.startsWith("v1/") || cleanPath.startsWith("api/") || cleanPath in directRootPaths -> listOf(cleanPath)
+            else -> listOf("api/$cleanPath", "v1/$cleanPath")
+        }
+        var notFound: String? = null
+        paths.forEachIndexed { index, path ->
+            val request = Request.Builder()
+                .url(tokenStore.serverUrl.endpoint(path))
+                .applyBearer(tokenStore.apiKey)
+                .method(method, body?.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) return response.body.string()
+                val message = "$method /$path failed: HTTP ${response.code}"
+                if (response.code == 404 && index < paths.lastIndex) {
+                    notFound = message
+                } else {
+                    error(message)
+                }
+            }
+        }
+        error(notFound ?: "$method /$cleanPath failed")
+    }
+
     private fun authenticatedRequest(path: String): Request {
+        if (path in directRootPaths) {
+            return Request.Builder()
+                .url(tokenStore.serverUrl.endpoint(path))
+                .applyBearer(tokenStore.apiKey)
+                .get()
+                .build()
+        }
         return Request.Builder()
             .url(tokenStore.serverUrl.endpoint(path))
             .applyBearer(tokenStore.apiKey)
@@ -180,10 +185,11 @@ class HermesRestClient @Inject constructor(
     }
 }
 
+private val directRootPaths = setOf("health", "health/detailed")
+
 fun Request.Builder.applyBearer(apiKey: String): Request.Builder {
     if (apiKey.isNotBlank()) {
         header("Authorization", "Bearer $apiKey")
-        header("x-hermes-session-token", apiKey)
     }
     return this
 }

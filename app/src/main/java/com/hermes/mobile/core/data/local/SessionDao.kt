@@ -25,9 +25,18 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun getById(sessionId: String): SessionEntity?
 
+    @Query("SELECT * FROM sessions ORDER BY last_synced_at DESC, started_at DESC LIMIT 1")
+    suspend fun latest(): SessionEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(sessions: List<SessionEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(session: SessionEntity)
+
     @Query("DELETE FROM sessions")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM sessions WHERE id = :sessionId")
+    suspend fun deleteById(sessionId: String)
 }

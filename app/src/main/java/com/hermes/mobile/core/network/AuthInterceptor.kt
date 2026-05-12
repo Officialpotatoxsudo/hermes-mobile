@@ -16,7 +16,6 @@ class AuthInterceptor(
         } else {
             builder
                 .header("Authorization", "Bearer $apiKey")
-                .header("x-hermes-session-token", apiKey)
                 .build()
         }
         return chain.proceed(request)

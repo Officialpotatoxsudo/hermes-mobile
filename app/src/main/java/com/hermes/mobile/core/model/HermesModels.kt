@@ -152,6 +152,18 @@ data class DashboardProviderDto(
     val totalModels: Int = models.size,
 )
 
+@Serializable
+data class OpenAiModelsResponse(
+    val data: List<OpenAiModelDto> = emptyList(),
+)
+
+@Serializable
+data class OpenAiModelDto(
+    val id: String,
+    @SerialName("owned_by")
+    val ownedBy: String = "hermes",
+)
+
 data class ToolProgress(
     val label: String,
     val tool: String? = null,

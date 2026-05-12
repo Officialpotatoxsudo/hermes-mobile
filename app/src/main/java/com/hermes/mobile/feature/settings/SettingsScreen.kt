@@ -32,7 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hermes.mobile.core.settings.LockTimeout
 import com.hermes.mobile.core.settings.ThemeMode
+import com.hermes.mobile.ui.components.frostedGlass
 
 @Composable
 fun SettingsScreen(
@@ -63,6 +65,21 @@ fun SettingsScreen(
                         text = mode.name,
                         selected = state.themeMode == mode,
                         onClick = { viewModel.setThemeMode(mode) },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        SettingItem("App lock", "Choose lock timeout") {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LockTimeout.entries.forEach { timeout ->
+                    Chip(
+                        text = timeout.label,
+                        selected = state.lockTimeout == timeout,
+                        onClick = { viewModel.setLockTimeout(timeout) },
                     )
                 }
             }
@@ -122,8 +139,12 @@ private fun SettingItem(title: String, subtitle: String, content: @Composable ()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .frostedGlass(
+                colors = MaterialTheme.colorScheme,
+                shape = RoundedCornerShape(24.dp),
+                containerAlpha = 0.72f,
+                borderAlpha = 0.16f,
+            )
             .padding(horizontal = 18.dp, vertical = 16.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium)
@@ -138,8 +159,12 @@ private fun ClickRow(title: String, subtitle: String, onClick: () -> Unit, dange
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .frostedGlass(
+                colors = MaterialTheme.colorScheme,
+                shape = RoundedCornerShape(24.dp),
+                containerAlpha = 0.72f,
+                borderAlpha = 0.16f,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -53,8 +53,11 @@ import com.hermes.mobile.feature.lock.AppLockScreen
 import com.hermes.mobile.feature.settings.SettingsScreen
 import com.hermes.mobile.feature.sessions.SessionHistoryScreen
 import com.hermes.mobile.feature.sessions.SessionListScreen
+import com.hermes.mobile.feature.splash.SplashScreen
+import com.hermes.mobile.ui.components.frostedGlass
 
 object Routes {
+    const val Splash = "splash"
     const val ConnectionSetup = "connection_setup"
     const val AppLock = "app_lock"
     const val Home = "home"
@@ -84,23 +87,19 @@ fun HermesNavGraph(
     onUnlocked: () -> Unit,
     navController: NavHostController = rememberNavController(),
 ) {
-    val startDestination = when {
-        !hasCredentials -> Routes.ConnectionSetup
-        !isUnlocked -> Routes.AppLock
-        else -> Routes.Home
-    }
+    val startDestination = Routes.Splash
 
-    LaunchedEffect(hasCredentials, isUnlocked) {
-        if (hasCredentials && !isUnlocked) {
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    LaunchedEffect(hasCredentials, isUnlocked, currentRoute) {
+        if (hasCredentials && !isUnlocked && currentRoute != null && currentRoute != Routes.Splash) {
             navController.navigate(Routes.AppLock) {
                 popUpTo(Routes.Home) { inclusive = true }
                 launchSingleTop = true
             }
         }
     }
-
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
     val isMainTab = currentRoute in mainTabs.map { it.route }
 
     Scaffold(
@@ -120,12 +119,11 @@ fun HermesNavGraph(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(34.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.68f))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
-                                RoundedCornerShape(34.dp),
+                            .frostedGlass(
+                                colors = MaterialTheme.colorScheme,
+                                shape = RoundedCornerShape(34.dp),
+                                containerAlpha = 0.62f,
+                                borderAlpha = 0.22f,
                             )
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -168,7 +166,7 @@ fun HermesNavGraph(
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
-            NavHost(
+             NavHost(
                 navController = navController,
                 startDestination = startDestination,
                 modifier = Modifier
@@ -187,6 +185,20 @@ fun HermesNavGraph(
                     slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(400)) + fadeOut(animationSpec = tween(400))
                 }
             ) {
+                composable(Routes.Splash) {
+                    SplashScreen(
+                        onFinished = {
+                            val next = when {
+                                !hasCredentials -> Routes.ConnectionSetup
+                                !isUnlocked -> Routes.AppLock
+                                else -> Routes.Home
+                            }
+                            navController.navigate(next) {
+                                popUpTo(Routes.Splash) { inclusive = true }
+                            }
+                        }
+                    )
+                }
                 composable(Routes.ConnectionSetup) {
                     ConnectionSetupScreen(
                         onContinue = {

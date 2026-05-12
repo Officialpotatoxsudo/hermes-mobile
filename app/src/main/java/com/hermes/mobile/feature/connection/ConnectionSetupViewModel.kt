@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.data.HermesRepository
+import com.hermes.mobile.core.error.ErrorMapper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.net.URI
 import javax.inject.Inject
 
 data class ConnectionSetupUiState(
@@ -39,9 +41,10 @@ class ConnectionSetupViewModel @Inject constructor(
     fun checkAndSave(onSaved: () -> Unit) {
         val state = _uiState.value
         val normalizedUrl = state.serverUrl.trim()
+        val uri = runCatching { URI(normalizedUrl) }.getOrNull()
         when {
-            !normalizedUrl.startsWith("https://") -> {
-                _uiState.update { it.copy(error = "Use HTTPS endpoint") }
+            uri?.scheme != "https" || uri.host.isNullOrBlank() -> {
+                _uiState.update { it.copy(error = "Enter a valid HTTPS server URL") }
             }
             state.apiKey.isBlank() -> {
                 _uiState.update { it.copy(error = "API key required") }
@@ -59,7 +62,7 @@ class ConnectionSetupViewModel @Inject constructor(
                             _uiState.update {
                                 it.copy(
                                     isChecking = false,
-                                    error = error.message ?: "Connection failed",
+                                    error = ErrorMapper.userMessage(error, "Connection failed"),
                                 )
                             }
                         }

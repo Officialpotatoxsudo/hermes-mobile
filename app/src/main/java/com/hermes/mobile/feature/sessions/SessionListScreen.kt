@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermes.mobile.core.data.local.SessionEntity
+import com.hermes.mobile.ui.components.frostedGlass
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -96,8 +98,12 @@ fun SessionListScreen(
             modifier = Modifier.padding(top = 16.dp, bottom = 12.dp, start = 4.dp),
         )
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(state.sessions, key = { it.id }) { session ->
-                SessionRow(session, onClick = { onSessionClick(session.id) })
+            if (state.isSyncing && state.sessions.isEmpty()) {
+                items(4) { index -> SessionSkeleton(index) }
+            } else {
+                items(state.sessions, key = { it.id }) { session ->
+                    SessionRow(session, onClick = { onSessionClick(session.id) })
+                }
             }
             item { Spacer(Modifier.height(16.dp)) }
         }
@@ -109,8 +115,12 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .frostedGlass(
+                colors = MaterialTheme.colorScheme,
+                shape = RoundedCornerShape(24.dp),
+                containerAlpha = 0.72f,
+                borderAlpha = 0.16f,
+            )
             .clickable(onClick = onClick)
             .padding(16.dp),
     ) {
@@ -130,8 +140,28 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
     }
 }
 
-private fun formatTimestamp(seconds: Long): String {
+@Composable
+private fun SessionSkeleton(index: Int) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .frostedGlass(
+                colors = MaterialTheme.colorScheme,
+                shape = RoundedCornerShape(24.dp),
+                containerAlpha = 0.42f,
+                borderAlpha = 0.12f,
+            )
+            .padding(16.dp),
+    ) {
+        Box(Modifier.width((180 - index * 18).dp).height(18.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)))
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.width((120 + index * 12).dp).height(14.dp).clip(RoundedCornerShape(7.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)))
+    }
+}
+
+private fun formatTimestamp(timestamp: Long): String {
+    val millis = if (timestamp < 10_000_000_000L) timestamp * 1000 else timestamp
     return DateTimeFormatter.ofPattern("MMM d, HH:mm")
         .withZone(ZoneId.systemDefault())
-        .format(Instant.ofEpochSecond(seconds))
+        .format(Instant.ofEpochMilli(millis))
 }
