@@ -3,6 +3,10 @@ package com.hermes.mobile.core.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 @Serializable
 data class ChatMessageDto(
@@ -11,11 +15,51 @@ data class ChatMessageDto(
 )
 
 @Serializable
+data class ChatRequestMessageDto(
+    val role: String,
+    val content: JsonElement,
+)
+
+@Serializable
 data class ChatCompletionRequest(
     val model: String = "hermes",
-    val messages: List<ChatMessageDto>,
+    val messages: List<ChatRequestMessageDto>,
     val stream: Boolean = true,
 )
+
+fun chatRequestMessage(
+    role: String,
+    text: String,
+    imageDataUrls: List<String> = emptyList(),
+): ChatRequestMessageDto {
+    if (imageDataUrls.isEmpty()) {
+        return ChatRequestMessageDto(role = role, content = JsonPrimitive(text))
+    }
+
+    val content = buildJsonArray {
+        add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", text.ifBlank { "Photo attached." })
+            },
+        )
+        imageDataUrls.forEach { dataUrl ->
+            add(
+                buildJsonObject {
+                    put("type", "image_url")
+                    put(
+                        "image_url",
+                        buildJsonObject {
+                            put("url", dataUrl)
+                            put("detail", "auto")
+                        },
+                    )
+                },
+            )
+        }
+    }
+    return ChatRequestMessageDto(role = role, content = content)
+}
 
 @Serializable
 data class ChatCompletionChunk(

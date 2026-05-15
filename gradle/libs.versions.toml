@@ -23,6 +23,7 @@ junitJupiter = "5.14.4"
 junitPlatform = "1.14.4"
 kotlinxCoroutinesTest = "1.11.0"
 lottieCompose = "6.6.6"
+coil = "3.2.0"
 phosphor = "2.1.1"
 
 [libraries]
@@ -75,6 +76,10 @@ biometric = { group = "androidx.biometric", name = "biometric", version.ref = "b
 # --- Animations & Icons ---
 lottie-compose = { group = "com.airbnb.android", name = "lottie-compose", version.ref = "lottieCompose" }
 material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+
+# --- Image Loading ---
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+coil-video = { group = "io.coil-kt.coil3", name = "coil-video", version.ref = "coil" }
 
 # --- Testing ---
 mockk-android = { group = "io.mockk", name = "mockk-android", version.ref = "mockk" }

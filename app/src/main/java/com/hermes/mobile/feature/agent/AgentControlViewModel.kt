@@ -3,6 +3,8 @@ package com.hermes.mobile.feature.agent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.data.HermesRepository
+import com.hermes.mobile.core.util.escapeJson
+import com.hermes.mobile.core.util.unescapeJson
 import com.hermes.mobile.core.error.ErrorMapper
 import com.hermes.mobile.core.model.HermesFeatureAction
 import com.hermes.mobile.core.model.HermesFeatureActionKind
@@ -147,28 +149,5 @@ class AgentControlViewModel @Inject constructor(
         return "Hermes native command requested from mobile: $command\n" +
             "Run the equivalent Hermes desktop/gateway action if available. " +
             "Return concise output plus any next action the mobile user can take."
-    }
-
-    private fun String.escapeJson(): String {
-        return buildString(length) {
-            this@escapeJson.forEach { ch ->
-                when (ch) {
-                    '\\' -> append("\\\\")
-                    '"' -> append("\\\"")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> append(ch)
-                }
-            }
-        }
-    }
-
-    private fun String.unescapeJson(): String {
-        return replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\")
     }
 }

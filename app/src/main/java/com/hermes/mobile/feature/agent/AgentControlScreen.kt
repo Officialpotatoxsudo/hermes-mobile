@@ -2,12 +2,17 @@ package com.hermes.mobile.feature.agent
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,13 +52,19 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -61,10 +73,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.LottieConstants
+import com.airbnb.lottie.compose.animateLottieCompositionAsState
+import com.airbnb.lottie.compose.rememberLottieComposition
+import com.hermes.mobile.R
 import com.hermes.mobile.core.model.HermesFeatureAction
 import com.hermes.mobile.core.model.HermesFeatureActionKind
 import com.hermes.mobile.core.model.HermesFeatureCategory
 import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.ui.components.HermesChip
+import com.hermes.mobile.ui.components.HermesCircleButton
+import com.hermes.mobile.ui.components.HermesHeader
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -96,14 +118,6 @@ fun AgentControlScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.background,
-                        ),
-                    ),
-                )
                 .statusBarsPadding(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -130,11 +144,25 @@ fun AgentControlScreen(
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
             }
-            items(state.selectedCategory.actions, key = { it.id }) { action ->
+            itemsIndexed(state.selectedCategory.actions, key = { _, action -> action.id }) { index, action ->
+                val alpha = remember(action.id) { Animatable(0f) }
+                val translationY = remember(action.id) { Animatable(20f) }
+                LaunchedEffect(action.id) {
+                    delay(index * 30L)
+                    alpha.animateTo(1f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f))
+                }
+                LaunchedEffect(action.id) {
+                    delay(index * 30L)
+                    translationY.animateTo(0f, animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f))
+                }
                 FeatureActionRow(
                     action = action,
                     selected = action.id == state.selectedAction.id,
                     onClick = { viewModel.selectAction(action) },
+                    modifier = Modifier.graphicsLayer {
+                        this.alpha = alpha.value
+                        this.translationY = translationY.value
+                    },
                 )
             }
             item {
@@ -154,30 +182,23 @@ fun AgentControlScreen(
 
 @Composable
 private fun Header(selectedCategory: HermesFeatureCategory, onBack: () -> Unit, onMenu: () -> Unit) {
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.agent_idle))
+    val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever, isPlaying = true)
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(
-            onClick = onMenu,
-            modifier = Modifier
-                .size(46.dp)
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
-                    shape = CircleShape,
-                    containerAlpha = 0.72f,
-                    borderAlpha = 0.18f,
-                ),
-        ) {
-            Icon(Icons.Rounded.Menu, contentDescription = "Agent menu")
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text("Agent", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                selectedCategory.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Box(modifier = Modifier.weight(1f)) {
+            HermesHeader(
+                title = "Agent",
+                subtitle = selectedCategory.title,
+                leadingIcon = {
+                    HermesCircleButton(onClick = onMenu) {
+                        Icon(Icons.Rounded.Menu, contentDescription = "Agent menu")
+                    }
+                },
+                trailingAction = "Back",
+                onTrailingAction = onBack,
             )
         }
-        ChipButton(text = "Back", onClick = onBack)
+        LottieAnimation(composition, { progress }, modifier = Modifier.size(48.dp))
     }
 }
 
@@ -250,7 +271,7 @@ private fun AgentDrawerCategoryRow(category: HermesFeatureCategory, selected: Bo
         Column(Modifier.weight(1f)) {
             Text(category.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             Text(
-                "${category.actions.size} real actions",
+                "${category.actions.size} actions",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -268,7 +289,7 @@ private fun DrawerBackRow(onBack: () -> Unit) {
             .padding(horizontal = 24.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.Rounded.ChevronRight, contentDescription = "Back to chats", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(12.dp))
         Text("Back to chats", style = MaterialTheme.typography.titleMedium)
     }
@@ -285,7 +306,7 @@ private fun CategoryRail(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         categories.forEach { category ->
-            ChipButton(
+            HermesChip(
                 text = category.title,
                 selected = category.id == selected.id,
                 onClick = { onSelect(category) },
@@ -299,19 +320,36 @@ private fun FeatureActionRow(
     action: HermesFeatureAction,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember(action.id) { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
+        label = "pressScale",
+    )
     val borderColor = if (selected) {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
     } else {
         MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
     }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(24.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = if (selected) 0.82f else 0.62f))
             .border(1.dp, borderColor, RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClickLabel = "Open ${action.title}",
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
+            }
             .padding(horizontal = 14.dp, vertical = 13.dp)
             .animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
@@ -322,7 +360,7 @@ private fun FeatureActionRow(
             Text(action.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(action.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
         }
-        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.Rounded.ChevronRight, contentDescription = "Open ${action.title}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -352,7 +390,7 @@ private fun ActionPanel(
                 Text(action.title, style = MaterialTheme.typography.titleMedium)
                 Text(actionKindLabel(action), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            ChipButton(
+            HermesChip(
                 text = when {
                     isLoading -> "Running"
                     action.kind == HermesFeatureActionKind.Read -> "Reload"
@@ -453,19 +491,6 @@ private fun CodeLine(text: String) {
     )
 }
 
-@Composable
-private fun ChipButton(text: String, selected: Boolean = false, onClick: () -> Unit) {
-    Text(
-        text,
-        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        style = MaterialTheme.typography.labelLarge,
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    )
-}
 
 @Composable
 private fun IconPill(icon: ImageVector, selected: Boolean) {
@@ -482,7 +507,7 @@ private fun IconPill(icon: ImageVector, selected: Boolean) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(icon, contentDescription = "Feature icon", tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

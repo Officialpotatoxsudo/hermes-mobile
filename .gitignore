@@ -8,3 +8,7 @@ local.properties
 
 docs/
 .planning/
+
+.omx/context/autonomous-app-improvement-20260512T192426Z.md
+
+*.md

@@ -26,4 +26,89 @@ class SsePayloadParserTest {
         assertEquals("hello", completion?.choices?.first()?.message?.content)
         assertEquals(9, completion?.usage?.totalTokens)
     }
+
+    @Test
+    fun parsesNestedOpenAiErrorMessage() {
+        val error = parser.parseError(
+            """{"error":{"message":"model not available","type":"invalid_request_error"}}""",
+        )
+
+        assertEquals("model not available", error)
+    }
+
+    @Test
+    fun skipsBlankNestedErrorMessage() {
+        val error = parser.parseError(
+            """{"error":{"message":"   ","detail":" retry later "}}""",
+        )
+
+        assertEquals("retry later", error)
+    }
+
+    @Test
+    fun trimsRawErrorFallback() {
+        assertEquals("upstream died", parser.parseError("   upstream died   "))
+    }
+
+    @Test
+    fun rawErrorFallbackUsesFirstUsefulLine() {
+        assertEquals("upstream died", parser.parseError("\n  upstream died  \nstack trace line"))
+    }
+
+    @Test
+    fun jsonErrorMessageUsesFirstUsefulLine() {
+        val error = parser.parseError(
+            """{"error":{"message":"\n model not available \n details later"}}""",
+        )
+
+        assertEquals("model not available", error)
+    }
+
+    @Test
+    fun rawErrorFallbackCapsLongText() {
+        assertEquals(200, parser.parseError("x".repeat(240)).length)
+    }
+
+    @Test
+    fun rawErrorFallbackCapsAtWordBoundary() {
+        val error = parser.parseError("word ".repeat(39) + "tailword")
+
+        assertEquals("word ".repeat(39).trim(), error)
+    }
+
+    @Test
+    fun blankErrorFallbackIsReadable() {
+        assertEquals("Unknown server error", parser.parseError("   "))
+    }
+
+    @Test
+    fun parsesNestedToolProgressPayload() {
+        val progress = parser.parseTool(
+            """{"tool":{"name":"browser"},"status":{"message":"running"}}""",
+        )
+
+        assertEquals("browser", progress?.label)
+        assertEquals("browser", progress?.tool)
+        assertEquals("running", progress?.status)
+    }
+
+    @Test
+    fun trimsToolProgressTextFields() {
+        val progress = parser.parseTool(
+            """{"label":"   ","message":" indexing ","status":{"message":" running "}}""",
+        )
+
+        assertEquals("indexing", progress?.label)
+        assertEquals("running", progress?.status)
+    }
+
+    @Test
+    fun toolProgressUsesFirstUsefulLine() {
+        val progress = parser.parseTool(
+            """{"message":"\n indexing \n ignored","status":{"message":"\n running \n ignored"}}""",
+        )
+
+        assertEquals("indexing", progress?.label)
+        assertEquals("running", progress?.status)
+    }
 }

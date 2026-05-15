@@ -12,10 +12,12 @@ sealed interface HermesSlashCommandAction {
 }
 
 fun mapHermesSlashCommand(rawInput: String): HermesSlashCommandAction {
-    val command = rawInput.trim()
+    val command = rawInput.firstNonBlankLine().orEmpty()
     if (!command.startsWith("/")) return HermesSlashCommandAction.None
 
-    val verb = command.substringBefore(" ").lowercase()
+    val verbEnd = command.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: command.length
+    val verb = command.take(verbEnd).lowercase()
+    val args = command.drop(verbEnd).trim()
     return when (verb) {
         "/new", "/reset" -> HermesSlashCommandAction.NewSession
         "/retry" -> HermesSlashCommandAction.Retry
@@ -23,11 +25,10 @@ fun mapHermesSlashCommand(rawInput: String): HermesSlashCommandAction {
         "/stop" -> HermesSlashCommandAction.Stop
         "/clear" -> HermesSlashCommandAction.ClearDraft
         "/model" -> {
-            val requested = command.removePrefix("/model").trim()
-            if (requested.isBlank()) {
+            if (args.isBlank()) {
                 HermesSlashCommandAction.AgentPrompt(command.toAgentPrompt())
             } else {
-                HermesSlashCommandAction.SelectModel(requested)
+                HermesSlashCommandAction.SelectModel(args)
             }
         }
         else -> HermesSlashCommandAction.AgentPrompt(command.toAgentPrompt())
@@ -37,4 +38,10 @@ fun mapHermesSlashCommand(rawInput: String): HermesSlashCommandAction {
 private fun String.toAgentPrompt(): String {
     return "Hermes native command requested from mobile: $this\n" +
         "Run the equivalent Hermes action if available, then return concise output."
+}
+
+private fun String.firstNonBlankLine(): String? {
+    return lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
 }

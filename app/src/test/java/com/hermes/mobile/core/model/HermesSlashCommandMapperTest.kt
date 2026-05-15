@@ -21,8 +21,32 @@ class HermesSlashCommandMapperTest {
     }
 
     @Test
+    fun mapsModelCommandWithCaseAndFlexibleWhitespace() {
+        val action = mapHermesSlashCommand("/MODEL\tHermes") as HermesSlashCommandAction.SelectModel
+
+        assertEquals("Hermes", action.requested)
+    }
+
+    @Test
+    fun mapsOnlyFirstUsefulCommandLine() {
+        val action = mapHermesSlashCommand("\n /MODEL Hermes \n ignored") as HermesSlashCommandAction.SelectModel
+
+        assertEquals("Hermes", action.requested)
+    }
+
+    @Test
     fun mapsDesktopInfoCommandsToAgentPrompt() {
         val action = mapHermesSlashCommand("/tools list") as HermesSlashCommandAction.AgentPrompt
+
+        assertEquals(
+            "Hermes native command requested from mobile: /tools list\nRun the equivalent Hermes action if available, then return concise output.",
+            action.prompt,
+        )
+    }
+
+    @Test
+    fun agentPromptOmitsPastedExtraLines() {
+        val action = mapHermesSlashCommand("\n /tools list \n ignored") as HermesSlashCommandAction.AgentPrompt
 
         assertEquals(
             "Hermes native command requested from mobile: /tools list\nRun the equivalent Hermes action if available, then return concise output.",

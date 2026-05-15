@@ -1,7 +1,18 @@
 package com.hermes.mobile.feature.connection
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,14 +21,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Link
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -25,19 +36,26 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.Spring
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.animateLottieCompositionAsState
+import com.airbnb.lottie.compose.rememberLottieComposition
+import com.hermes.mobile.R
+import com.hermes.mobile.ui.components.frostedGlass
 
 @Composable
 fun ConnectionSetupScreen(
@@ -50,95 +68,190 @@ fun ConnectionSetupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        colors.surface,
-                        colors.background,
-                    ),
-                ),
-            )
             .statusBarsPadding()
             .imePadding()
-            .padding(horizontal = 24.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.Bottom,
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = Icons.Rounded.Link,
-            contentDescription = null,
-            tint = colors.primary,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
-        Text(
-            text = "Hermes",
-            style = MaterialTheme.typography.headlineMedium,
-            color = colors.onBackground,
-        )
-        Text(
-            text = "Enter your HTTPS Hermes endpoint and API key.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = colors.onSurfaceVariant,
-            modifier = Modifier.padding(top = 6.dp, bottom = 26.dp),
-        )
-        HermesTextField(
-            value = state.serverUrl,
-            onValueChange = viewModel::onServerUrlChanged,
-            label = "Server URL",
-            keyboardType = KeyboardType.Uri,
-        )
-        Spacer(Modifier.height(12.dp))
-        HermesTextField(
-            value = state.apiKey,
-            onValueChange = viewModel::onApiKeyChanged,
-            label = "API key",
-            keyboardType = KeyboardType.Password,
-            secret = true,
-        )
-        state.error?.let {
-            Text(
-                text = it,
-                color = colors.error,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-        }
-        if (state.isHealthy) {
-            val scale = remember { Animatable(0f) }
-            LaunchedEffect(Unit) {
-                scale.animateTo(1f, animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow))
-            }
-            Row(
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 10.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.CheckCircle,
-                    contentDescription = null,
-                    tint = androidx.compose.ui.graphics.Color(0xFF4CAF50),
-                    modifier = Modifier.padding(end = 6.dp).scale(scale.value),
-                )
-                Text(
-                    text = "Connection verified",
-                    color = colors.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-        Button(
-            onClick = { viewModel.checkAndSave(onContinue) },
-            enabled = !state.isChecking,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = colors.primary,
-                contentColor = colors.onPrimary,
-            ),
-            shape = RoundedCornerShape(28.dp),
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 20.dp)
-                .height(52.dp),
+                .padding(bottom = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(if (state.isChecking) "Checking" else "Check and continue")
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(colors.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Link,
+                    contentDescription = "Hermes connection",
+                    tint = colors.onPrimaryContainer,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = "Connect to Hermes",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = colors.onBackground,
+            )
+            Text(
+                text = "Enter your server endpoint to get started",
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .frostedGlass(
+                    colors = colors,
+                    shape = RoundedCornerShape(28.dp),
+                    containerAlpha = 0.76f,
+                    borderAlpha = 0.16f,
+                )
+                .padding(20.dp),
+        ) {
+            Text(
+                "Server details",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.onSurface,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            HermesTextField(
+                value = state.serverUrl,
+                onValueChange = viewModel::onServerUrlChanged,
+                label = "Server URL",
+                keyboardType = KeyboardType.Uri,
+            )
+            Spacer(Modifier.height(12.dp))
+            HermesTextField(
+                value = state.apiKey,
+                onValueChange = viewModel::onApiKeyChanged,
+                label = "API key (optional)",
+                keyboardType = KeyboardType.Password,
+                secret = true,
+            )
+            if (state.isEditingExistingConnection) {
+                Text(
+                    text = "Leave blank to keep current key",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+                )
+            }
+            AnimatedVisibility(
+                visible = state.error != null,
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut() + slideOutVertically { -it / 2 },
+            ) {
+                state.error?.let {
+                    val errorComp by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.error_shake))
+                    val errorProgress by animateLottieCompositionAsState(errorComp, isPlaying = true)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(colors.errorContainer.copy(alpha = 0.4f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        LottieAnimation(
+                            errorComp,
+                            { errorProgress },
+                            modifier = Modifier.size(24.dp).padding(end = 8.dp),
+                        )
+                        Text(
+                            text = it,
+                            color = colors.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+            AnimatedVisibility(
+                visible = state.isHealthy,
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut() + slideOutVertically { -it / 2 },
+            ) {
+                val successComp by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.success))
+                val successProgress by animateLottieCompositionAsState(successComp, isPlaying = true)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(top = 12.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colors.primaryContainer.copy(alpha = 0.3f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    LottieAnimation(
+                        successComp,
+                        { successProgress },
+                        modifier = Modifier.size(24.dp).padding(end = 8.dp),
+                    )
+                    Text(
+                        text = "Connection verified",
+                        color = colors.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        val haptic = LocalHapticFeedback.current
+        val buttonInteraction = remember { MutableInteractionSource() }
+        val btnPressed by buttonInteraction.collectIsPressedAsState()
+        val btnScale by animateFloatAsState(
+            targetValue = if (btnPressed) 0.95f else 1f,
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 400f),
+            label = "btnScale",
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .graphicsLayer { scaleX = btnScale; scaleY = btnScale }
+                .clip(RoundedCornerShape(28.dp))
+                .background(
+                    if (state.isChecking) colors.primary.copy(alpha = 0.6f) else colors.primary,
+                )
+                .clickable(
+                    enabled = !state.isChecking,
+                    interactionSource = buttonInteraction,
+                    indication = null,
+                    onClickLabel = "Connect",
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.checkAndSave(onContinue)
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (state.isChecking) "Checking..." else "Connect",
+                color = colors.onPrimary,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+
+        Text(
+            "Add API key only if your server requires authentication.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 12.dp, start = 4.dp, end = 4.dp),
+        )
+        Spacer(Modifier.height(32.dp))
     }
 }
 
@@ -155,14 +268,14 @@ private fun HermesTextField(
         onValueChange = onValueChange,
         label = { Text(label) },
         singleLine = true,
-        visualTransformation = if (secret) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
             unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
-            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.62f),
         ),
         modifier = Modifier.fillMaxWidth(),
     )

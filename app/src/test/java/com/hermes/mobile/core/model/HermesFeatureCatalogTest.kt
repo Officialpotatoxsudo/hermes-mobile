@@ -54,6 +54,39 @@ class HermesFeatureCatalogTest {
     }
 
     @Test
+    fun catalogExposesCoreHermesAgentSlashControls() {
+        val commandTargets = hermesFeatureCatalog
+            .flatMap { it.actions }
+            .filter { it.kind == HermesFeatureActionKind.Command }
+            .map { it.target.substringBefore(" ") }
+            .toSet()
+
+        assertTrue(
+            commandTargets.containsAll(
+                setOf(
+                    "/approve",
+                    "/deny",
+                    "/background",
+                    "/queue",
+                    "/steer",
+                    "/model",
+                    "/reasoning",
+                    "/title",
+                    "/resume",
+                    "/status",
+                    "/usage",
+                    "/insights",
+                    "/reload",
+                    "/reload-mcp",
+                    "/tools",
+                    "/skills",
+                    "/rollback",
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun createActionsHaveExecutableJsonTemplates() {
         hermesFeatureCatalog.flatMap { it.actions }
             .filter { it.kind == HermesFeatureActionKind.Create }

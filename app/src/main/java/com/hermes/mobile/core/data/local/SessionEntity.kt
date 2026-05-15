@@ -2,11 +2,20 @@ package com.hermes.mobile.core.data.local
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.Index
 
-@Entity(tableName = "sessions")
+const val LEGACY_ACCOUNT_SCOPE = "legacy"
+
+@Entity(
+    tableName = "sessions",
+    primaryKeys = ["account_scope", "id"],
+    indices = [
+        Index(value = ["account_scope", "started_at"]),
+        Index(value = ["account_scope", "local_last_activity_at"]),
+        Index(value = ["account_scope", "last_synced_at"]),
+    ],
+)
 data class SessionEntity(
-    @PrimaryKey
     @ColumnInfo(name = "id")
     val id: String,
     @ColumnInfo(name = "title")
@@ -23,4 +32,8 @@ data class SessionEntity(
     val model: String,
     @ColumnInfo(name = "last_synced_at")
     val lastSyncedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "local_last_activity_at")
+    val localLastActivityAt: Long = startedAt,
+    @ColumnInfo(name = "account_scope")
+    val accountScope: String = LEGACY_ACCOUNT_SCOPE,
 )

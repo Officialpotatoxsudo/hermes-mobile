@@ -1,0 +1,38 @@
+{
+  "active": true,
+  "iteration": 162,
+  "max_iterations": 999,
+  "current_phase": "executing",
+  "started_at": "2026-05-12T19:24:26Z",
+  "task_description": "Autonomous Hermes mobile improvement loop",
+  "context_snapshot_path": "/Users/krishnabahadurbasnet/Projects/hermes-mobile/.omx/context/autonomous-app-improvement-20260512T192426Z.md",
+  "prd_path": "/Users/krishnabahadurbasnet/Projects/hermes-mobile/.omx/plans/prd-autonomous-app-improvement.md",
+  "test_spec_path": "/Users/krishnabahadurbasnet/Projects/hermes-mobile/.omx/plans/test-spec-autonomous-app-improvement.md",
+  "iteration_goal": "Improve voice attachment display/payload separation if needed",
+  "last_verified_command": "./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --console=plain",
+  "last_verified_result": "BUILD SUCCESSFUL in 9s",
+  "heartbeat_id": "hermes-app-improvement-loop",
+  "heartbeat_interval": "5 minutes",
+  "completed_iterations": [
+    "agent edit/delete",
+    "full Hermes slash command suggestions",
+    "local HTTP endpoint support for emulator",
+    "filtered slash command suggestions",
+    "bare local endpoint normalization",
+    "normalized connection field state"
+  ],
+  "last_completed_iteration": 161,
+  "last_change": "Endpoint URL joining now uses first clean line for saved base URL and request path, preventing pasted trailing lines from leaking into network URLs.",
+  "last_files": [
+    "app/src/main/java/com/hermes/mobile/feature/chat/ChatViewModel.kt",
+    "app/src/test/java/com/hermes/mobile/feature/chat/ChatRetryPayloadTest.kt"
+  ],
+  "last_verification": [
+    "RED: bash ./gradlew :app:testDebugUnitTest --tests com.hermes.mobile.core.network.EndpointTest.endpointUsesFirstCleanSavedBaseUrlLine --console=plain failed before production patch",
+    "GREEN: bash ./gradlew :app:testDebugUnitTest --tests com.hermes.mobile.core.network.EndpointTest --console=plain",
+    "bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --console=plain"
+  ],
+  "last_result": "BUILD SUCCESSFUL",
+  "goal": "Inspect and fix one small agent CRUD validation/UX reliability gap",
+  "last_status": "passed"
+}

@@ -3,6 +3,7 @@ package com.hermes.mobile.feature.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.auth.TokenStore
+import com.hermes.mobile.core.data.HermesRepository
 import com.hermes.mobile.core.settings.AppPreferences
 import com.hermes.mobile.core.settings.LockTimeout
 import com.hermes.mobile.core.settings.ThemeMode
@@ -18,6 +19,7 @@ import javax.inject.Inject
 data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.System,
     val lockTimeout: LockTimeout = LockTimeout.FiveMinutes,
+    val hideChatPreviews: Boolean = true,
     val serverUrl: String = "",
     val showLogoutConfirm: Boolean = false,
 )
@@ -26,16 +28,24 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     private val tokenStore: TokenStore,
     private val appPreferences: AppPreferences,
+    private val repository: HermesRepository,
 ) : ViewModel() {
-    private val controls = kotlinx.coroutines.flow.MutableStateFlow(SettingsUiState(serverUrl = tokenStore.serverUrl))
+    private val controls = kotlinx.coroutines.flow.MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = combine(
         appPreferences.themeMode,
         appPreferences.lockTimeout,
+        appPreferences.hideChatPreviews,
+        tokenStore.savedConnection,
         controls,
-    ) { themeMode, lockTimeout, state ->
-        state.copy(themeMode = themeMode, lockTimeout = lockTimeout, serverUrl = tokenStore.serverUrl)
+    ) { themeMode, lockTimeout, hideChatPreviews, savedConnection, state ->
+        state.copy(
+            themeMode = themeMode,
+            lockTimeout = lockTimeout,
+            hideChatPreviews = hideChatPreviews,
+            serverUrl = savedConnection.serverUrl,
+        )
     }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState(serverUrl = tokenStore.serverUrl))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun confirmLogout() {
         controls.update { it.copy(showLogoutConfirm = true) }
@@ -57,9 +67,17 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setHideChatPreviews(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferences.setHideChatPreviews(enabled)
+        }
+    }
+
     fun logout() {
         viewModelScope.launch {
+            repository.clearLocalDataForActiveConnection()
             tokenStore.clearCredentials()
+            controls.update { it.copy(showLogoutConfirm = false) }
         }
     }
 }

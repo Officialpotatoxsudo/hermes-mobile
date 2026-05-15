@@ -3,6 +3,7 @@ package com.hermes.mobile.core.settings
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,6 +25,8 @@ enum class ThemeMode {
     System,
     Light,
     Dark,
+    PureBlack,
+    PureWhite,
     Sepia,
     Nord,
     Catppuccin,
@@ -45,10 +49,12 @@ data class AgentProfile(
 
 @Singleton
 class AppPreferences @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private val themeKey = stringPreferencesKey("theme_mode")
     private val lockTimeoutKey = stringPreferencesKey("lock_timeout")
+    private val hideChatPreviewsKey = booleanPreferencesKey("hide_chat_previews")
+    private val lastOpenedChatSessionIdKey = stringPreferencesKey("last_opened_chat_session_id")
     private val agentsKey = stringPreferencesKey("agent_profiles")
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -62,6 +68,14 @@ class AppPreferences @Inject constructor(
             .getOrDefault(LockTimeout.FiveMinutes)
     }
 
+    val hideChatPreviews: Flow<Boolean> = context.appPreferencesDataStore.data.map { prefs ->
+        prefs[hideChatPreviewsKey] ?: true
+    }
+
+    val lastOpenedChatSessionId: Flow<String> = context.appPreferencesDataStore.data.map { prefs ->
+        prefs[lastOpenedChatSessionIdKey].orEmpty()
+    }
+
     val agents: Flow<List<AgentProfile>> = context.appPreferencesDataStore.data.map { prefs ->
         val stored = prefs[agentsKey]
         runCatching {
@@ -69,8 +83,7 @@ class AppPreferences @Inject constructor(
                 defaultAgents
             } else {
                 val parsed = json.decodeFromString<List<AgentProfile>>(stored)
-                (defaultAgents + parsed.filterNot { it.id == defaultAgents.first().id })
-                    .distinctBy { it.id }
+                mergeStoredAgentProfiles(parsed)
             }
         }.getOrDefault(defaultAgents)
     }
@@ -87,19 +100,56 @@ class AppPreferences @Inject constructor(
         }
     }
 
+    suspend fun setHideChatPreviews(enabled: Boolean) {
+        context.appPreferencesDataStore.edit { prefs ->
+            prefs[hideChatPreviewsKey] = enabled
+        }
+    }
+
+    suspend fun setLastOpenedChatSessionId(sessionId: String) {
+        context.appPreferencesDataStore.edit { prefs ->
+            val cleanSessionId = sessionId.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotBlank() }
+                .orEmpty()
+            if (cleanSessionId.isBlank()) {
+                prefs.remove(lastOpenedChatSessionIdKey)
+            } else {
+                prefs[lastOpenedChatSessionIdKey] = cleanSessionId
+            }
+        }
+    }
+
     suspend fun addAgent(name: String, subtitle: String) {
-        val cleanName = name.trim().ifBlank { return }
+        val agent = buildCustomAgentProfile(
+            id = newCustomAgentId(),
+            name = name,
+            subtitle = subtitle,
+        ) ?: return
         context.appPreferencesDataStore.edit { prefs ->
             val current = runCatching {
                 json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())
             }.getOrDefault(emptyList())
-            val agent = AgentProfile(
-                id = "agent-${System.currentTimeMillis()}",
-                name = cleanName.take(40),
-                subtitle = subtitle.trim().ifBlank { "Custom Hermes agent" }.take(96),
-                initial = cleanName.first().uppercase(),
-            )
-            prefs[agentsKey] = json.encodeToString((current + agent).distinctBy { it.id })
+            prefs[agentsKey] = json.encodeToString(upsertCustomAgent(current, agent))
+        }
+    }
+
+    suspend fun updateAgent(id: String, name: String, subtitle: String) {
+        val agent = buildCustomAgentProfile(id, name, subtitle) ?: return
+        context.appPreferencesDataStore.edit { prefs ->
+            val current = runCatching {
+                json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())
+            }.getOrDefault(emptyList())
+            prefs[agentsKey] = json.encodeToString(upsertCustomAgent(current, agent))
+        }
+    }
+
+    suspend fun removeAgent(id: String) {
+        context.appPreferencesDataStore.edit { prefs ->
+            val current = runCatching {
+                json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())
+            }.getOrDefault(emptyList())
+            prefs[agentsKey] = json.encodeToString(removeCustomAgent(current, id))
         }
     }
 
@@ -113,4 +163,8 @@ class AppPreferences @Inject constructor(
             ),
         )
     }
+}
+
+internal fun newCustomAgentId(uuid: UUID = UUID.randomUUID()): String {
+    return "agent-$uuid"
 }

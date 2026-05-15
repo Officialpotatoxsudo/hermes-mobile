@@ -115,6 +115,10 @@ dependencies {
     implementation(libs.lottie.compose)
     implementation(libs.material.icons.extended)
 
+    // Image Loading
+    implementation(libs.coil.compose)
+    implementation(libs.coil.video)
+
     // Testing
     testImplementation(libs.mockk.android)
     testImplementation(libs.junit.jupiter.api)

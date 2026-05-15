@@ -8,7 +8,7 @@ class AuthInterceptor(
     private val tokenStore: TokenStore,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
-        val apiKey = tokenStore.apiKey
+        val apiKey = tokenStore.apiKey.safeHeaderLine()
         val builder = chain.request().newBuilder()
             .header("ngrok-skip-browser-warning", "true")
         val request = if (apiKey.isBlank() || chain.request().header("Authorization") != null) {

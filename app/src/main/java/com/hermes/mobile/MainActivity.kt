@@ -5,7 +5,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
@@ -15,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hermes.mobile.core.auth.AppLockManager
+import com.hermes.mobile.core.auth.SavedConnection
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.settings.AppPreferences
 import com.hermes.mobile.core.settings.ThemeMode
@@ -40,6 +40,8 @@ class MainActivity : FragmentActivity() {
             val lockTimeout by appPreferences.lockTimeout.collectAsStateWithLifecycle(
                 initialValue = com.hermes.mobile.core.settings.LockTimeout.FiveMinutes,
             )
+            val lastOpenedChatSessionId by appPreferences.lastOpenedChatSessionId.collectAsStateWithLifecycle(initialValue = "")
+            val savedConnection by tokenStore.savedConnection.collectAsStateWithLifecycle(initialValue = SavedConnection())
             appLockManager.setLockTimeout(lockTimeout.millis)
             HermesTheme(themeMode = themeMode) {
                 Surface(
@@ -48,8 +50,9 @@ class MainActivity : FragmentActivity() {
                 ) {
                     Box {
                         HermesNavGraph(
-                            hasCredentials = tokenStore.hasCredentials(),
+                            hasCredentials = savedConnection.serverUrl.isNotBlank(),
                             isUnlocked = isUnlocked,
+                            lastOpenedChatSessionId = lastOpenedChatSessionId,
                             onUnlocked = {
                                 appLockManager.unlock()
                                 isUnlocked = true

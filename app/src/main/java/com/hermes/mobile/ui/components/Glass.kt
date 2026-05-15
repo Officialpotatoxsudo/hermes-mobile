@@ -11,10 +11,10 @@ import androidx.compose.ui.unit.dp
 fun Modifier.frostedGlass(
     colors: ColorScheme,
     shape: Shape,
-    containerAlpha: Float = 0.72f,
-    borderAlpha: Float = 0.18f,
+    containerAlpha: Float = 0.78f,
+    borderAlpha: Float = 0.14f,
 ): Modifier {
     return clip(shape)
-        .background(colors.surface.copy(alpha = containerAlpha))
-        .border(1.dp, colors.outline.copy(alpha = borderAlpha), shape)
+        .background(colors.surface.copy(alpha = containerAlpha.coerceIn(0f, 1f)))
+        .border(1.dp, colors.outline.copy(alpha = borderAlpha.coerceIn(0f, 1f)), shape)
 }

@@ -4,22 +4,24 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
-import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "messages",
+    primaryKeys = ["account_scope", "id"],
     foreignKeys = [
         ForeignKey(
             entity = SessionEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["session_id"],
+            parentColumns = ["account_scope", "id"],
+            childColumns = ["account_scope", "session_id"],
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index(value = ["session_id"])],
+    indices = [
+        Index(value = ["account_scope", "session_id"]),
+        Index(value = ["account_scope", "timestamp"]),
+    ],
 )
 data class MessageEntity(
-    @PrimaryKey
     @ColumnInfo(name = "id")
     val id: Long,
     @ColumnInfo(name = "session_id")
@@ -30,4 +32,10 @@ data class MessageEntity(
     val content: String,
     @ColumnInfo(name = "timestamp")
     val timestamp: Long,
+    @ColumnInfo(name = "image_uris_json")
+    val imageUrisJson: String = "[]",
+    @ColumnInfo(name = "account_scope")
+    val accountScope: String = LEGACY_ACCOUNT_SCOPE,
+    @ColumnInfo(name = "remote_backed")
+    val remoteBacked: Boolean = true,
 )

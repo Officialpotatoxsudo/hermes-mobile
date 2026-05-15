@@ -1,5 +1,7 @@
 package com.hermes.mobile.core.model
 
+import com.hermes.mobile.core.util.escapeJson
+
 enum class HermesFeatureActionKind {
     Read,
     Create,
@@ -37,6 +39,12 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
             command("chat.retry", "Retry", "Retry last turn", "/retry"),
             command("chat.undo", "Undo", "Remove last exchange", "/undo"),
             command("chat.stop", "Stop", "Interrupt current work", "/stop"),
+            command("chat.background", "Background", "Continue active work in background", "/background"),
+            command("chat.queue", "Queue", "Queue the next instruction while busy", "/queue "),
+            command("chat.steer", "Steer", "Steer the active response", "/steer "),
+            command("chat.title", "Rename chat", "Set current session title", "/title "),
+            command("chat.resume", "Resume", "Resume by session id or title", "/resume "),
+            command("chat.rollback", "Rollback", "Rollback recent work", "/rollback"),
             command("chat.compress", "Compress", "Compact context", "/compress"),
         ),
     ),
@@ -61,6 +69,8 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
             read("runs.capabilities", "Run capability map", "Discover run endpoints", "v1/capabilities"),
             command("runs.stop", "Stop active run", "Interrupt from chat", "/stop"),
             command("runs.status", "Status", "Current gateway/session status", "/status"),
+            command("runs.approve", "Approve", "Approve pending tool/action request", "/approve"),
+            command("runs.deny", "Deny", "Deny pending tool/action request", "/deny"),
         ),
     ),
     HermesFeatureCategory(
@@ -84,6 +94,7 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
             command("tools.list", "Toolsets", "List enabled/disabled toolsets", "/tools list"),
             command("tools.enable", "Enable toolset", "Enable toolset by name", "/tools enable "),
             command("tools.disable", "Disable toolset", "Disable toolset by name", "/tools disable "),
+            command("tools.reloadMcp", "Reload MCP", "Reload MCP tool configuration", "/reload-mcp"),
             command("tools.browser", "Browser", "Browser automation command", "/browser"),
             run("tools.audit", "Tool audit", "Ask Hermes to report real enabled tools", "List enabled toolsets for api_server, available MCP tools, browser/web support, and any disabled critical tools."),
         ),
@@ -127,6 +138,7 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
             read("models.api", "API model", "GET /v1/models", "v1/models"),
             command("models.current", "Current model", "Show current provider/model", "/model"),
             command("models.switch", "Switch model", "Use /model provider:model", "/model "),
+            command("models.reasoning", "Reasoning", "Set reasoning effort if backend supports it", "/reasoning "),
             command("models.usage", "Usage", "Current usage/cost", "/usage"),
             command("models.insights", "Insights", "Usage analytics", "/insights"),
         ),
@@ -138,6 +150,7 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
         actions = listOf(
             read("security.health", "Health", "GET /health", "health"),
             read("security.detailed", "Detailed health", "GET /health/detailed", "health/detailed"),
+            command("security.reload", "Reload", "Reload Hermes config/env", "/reload"),
             run("security.doctor", "Doctor", "Run Hermes diagnostic through agent", "Run a Hermes doctor-style diagnostic. Check API server, model auth, gateway status, tool availability, and common mobile connection issues."),
             run("security.update", "Update guidance", "Ask Hermes to run/update if safe", "Check whether hermes update is needed. If update is available, explain safest command and whether unattended update is safe."),
         ),
@@ -162,18 +175,3 @@ private fun run(id: String, title: String, subtitle: String, input: String) =
         target = "v1/runs",
         bodyTemplate = """{"input":"${input.escapeJson()}"}""",
     )
-
-private fun String.escapeJson(): String {
-    return buildString(length) {
-        this@escapeJson.forEach { ch ->
-            when (ch) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> append(ch)
-            }
-        }
-    }
-}

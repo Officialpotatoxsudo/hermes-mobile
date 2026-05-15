@@ -1,5 +1,9 @@
 package com.hermes.mobile.core.data
 
+import android.content.Context
+import com.hermes.mobile.core.auth.TokenStore
+import com.hermes.mobile.core.auth.connectionIdentityFor
+import com.hermes.mobile.core.data.local.LEGACY_ACCOUNT_SCOPE
 import com.hermes.mobile.core.data.local.MessageDao
 import com.hermes.mobile.core.data.local.MessageEntity
 import com.hermes.mobile.core.data.local.SessionDao
@@ -11,6 +15,8 @@ import com.hermes.mobile.core.model.SessionMessageDto
 import com.hermes.mobile.core.network.HermesRestClient
 import com.hermes.mobile.core.network.SseClient
 import com.hermes.mobile.core.network.SseEvent
+import com.hermes.mobile.core.util.deleteHermesMediaDirectory
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,37 +27,44 @@ class HermesRepository @Inject constructor(
     private val sseClient: SseClient,
     private val sessionDao: SessionDao,
     private val messageDao: MessageDao,
+    private val tokenStore: TokenStore,
+    @param:ApplicationContext private val appContext: Context,
 ) {
     fun sessions(query: String): Flow<List<SessionEntity>> {
-        return if (query.isBlank()) sessionDao.getAllFlow() else sessionDao.searchFlow(query.trim())
+        val cleanQuery = query.cleanRepositoryQuery()
+        val scope = scopeSnapshot()
+        return if (cleanQuery == null) sessionDao.getAllFlow(scope) else sessionDao.searchFlow(scope, cleanQuery)
     }
 
-    fun messages(sessionId: String): Flow<List<MessageEntity>> = messageDao.getBySessionIdFlow(sessionId)
+    fun messages(sessionId: String): Flow<List<MessageEntity>> = messageDao.getBySessionIdFlow(scopeSnapshot(), sessionId)
 
-    suspend fun latestSession(): SessionEntity? = sessionDao.latest()
+    suspend fun latestSession(): SessionEntity? = sessionDao.latest(activeScope())
 
-    suspend fun cachedMessages(sessionId: String): List<MessageEntity> = messageDao.getBySessionId(sessionId)
+    suspend fun cachedSession(sessionId: String): SessionEntity? = sessionDao.getById(activeScope(), sessionId)
+
+    suspend fun cachedMessages(sessionId: String): List<MessageEntity> = messageDao.getBySessionId(activeScope(), sessionId)
 
     suspend fun saveLocalSession(session: SessionEntity) {
-        sessionDao.upsert(session)
+        sessionDao.upsert(session.copy(accountScope = activeScope()))
     }
 
     suspend fun saveLocalMessage(message: MessageEntity) {
-        messageDao.upsert(message)
+        messageDao.upsert(message.copy(accountScope = activeScope(), remoteBacked = false))
     }
 
     suspend fun saveLocalMessages(messages: List<MessageEntity>) {
-        messageDao.upsertAll(messages)
+        val scope = activeScope()
+        messageDao.upsertAll(messages.map { it.copy(accountScope = scope, remoteBacked = false) })
     }
 
-    suspend fun deleteLocalMessages(messageIds: List<Long>) {
-        if (messageIds.isNotEmpty()) {
-            messageDao.deleteByIds(messageIds)
+    suspend fun deleteLocalMessages(sessionId: String, messageIds: List<Long>) {
+        if (sessionId.isNotBlank() && messageIds.isNotEmpty()) {
+            messageDao.deleteByIds(activeScope(), sessionId, messageIds)
         }
     }
 
     suspend fun deleteLocalSession(sessionId: String) {
-        sessionDao.deleteById(sessionId)
+        sessionDao.deleteById(activeScope(), sessionId)
     }
 
     suspend fun checkHealth(serverUrl: String, apiKey: String): Result<Unit> {
@@ -59,15 +72,32 @@ class HermesRepository @Inject constructor(
     }
 
     suspend fun syncSessions(): Result<Unit> {
-        return restClient.fetchSessions().mapCatching { response ->
-            sessionDao.upsertAll(response.sessions.map(SessionDto::toEntity))
+        val scope = activeScope()
+        return runCatching {
+            var offset = 0
+            while (true) {
+                val response = restClient.fetchSessions(syncSessionsPageSize, offset).getOrThrow()
+                sessionDao.upsertAll(response.sessions.map { it.toEntity(scope) })
+                if (response.sessions.size < syncSessionsPageSize) break
+                offset += syncSessionsPageSize
+            }
         }
     }
 
     suspend fun syncMessages(sessionId: String): Result<Unit> {
+        val scope = activeScope()
         return restClient.fetchMessages(sessionId).mapCatching { response ->
-            messageDao.upsertAll(response.messages.map { it.toEntity(sessionId) })
+            val messages = response.messages.map { it.toEntity(scope, sessionId) }
+            messageDao.upsertAll(messages)
+            messageDao.deleteStaleRemoteMessages(scope, sessionId, messages.map { it.id })
         }
+    }
+
+    suspend fun clearLocalDataForActiveConnection() {
+        val scope = activeScope()
+        deleteHermesMediaDirectory(appContext)
+        messageDao.deleteByScope(scope)
+        sessionDao.deleteByScope(scope)
     }
 
     suspend fun fetchModelOptions(): Result<DashboardModelOptionsResponse> = restClient.fetchModelOptions()
@@ -83,9 +113,25 @@ class HermesRepository @Inject constructor(
     suspend fun postText(path: String, body: String): Result<String> = restClient.postText(path, body)
 
     suspend fun deleteText(path: String): Result<String> = restClient.deleteText(path)
+
+    private fun scopeSnapshot(): String {
+        return connectionIdentityFor(tokenStore.serverUrl, tokenStore.apiKey).ifBlank { LEGACY_ACCOUNT_SCOPE }
+    }
+
+    private suspend fun activeScope(): String {
+        return tokenStore.connectionIdentity().ifBlank { LEGACY_ACCOUNT_SCOPE }
+    }
 }
 
-private fun SessionDto.toEntity(): SessionEntity {
+private const val syncSessionsPageSize = 50
+
+private fun String.cleanRepositoryQuery(): String? {
+    return lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
+}
+
+private fun SessionDto.toEntity(accountScope: String): SessionEntity {
     return SessionEntity(
         id = id,
         title = title,
@@ -94,15 +140,18 @@ private fun SessionDto.toEntity(): SessionEntity {
         endedAt = endedAt,
         messageCount = messageCount,
         model = model,
+        accountScope = accountScope,
     )
 }
 
-private fun SessionMessageDto.toEntity(sessionId: String): MessageEntity {
+private fun SessionMessageDto.toEntity(accountScope: String, sessionId: String): MessageEntity {
     return MessageEntity(
         id = id,
         sessionId = sessionId,
         role = role,
         content = content,
         timestamp = timestamp,
+        accountScope = accountScope,
+        remoteBacked = true,
     )
 }

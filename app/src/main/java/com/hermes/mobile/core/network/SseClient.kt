@@ -163,10 +163,11 @@ private fun Response.isProxyLike(): Boolean {
 }
 
 fun Request.Builder.applyHermesSessionHeaders(sessionId: String?, apiKey: String): Request.Builder {
-    val cleanSessionId = sessionId?.trim().orEmpty()
+    val cleanSessionId = sessionId?.safeHeaderLine(maxLength = 512).orEmpty()
+    val cleanApiKey = apiKey.safeHeaderLine()
     if (cleanSessionId.isBlank()) return this
     header("X-Hermes-Session-Id", cleanSessionId)
-    if (apiKey.isNotBlank()) {
+    if (cleanApiKey.isNotBlank()) {
         header("X-Hermes-Session-Key", "mobile:${cleanSessionId.take(240)}")
     }
     return this

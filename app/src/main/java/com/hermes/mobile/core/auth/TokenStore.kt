@@ -12,9 +12,11 @@ import com.google.crypto.tink.KeyTemplates
 import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.security.MessageDigest
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.onEach
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,9 +24,15 @@ private val Context.tokenDataStore: DataStore<Preferences> by preferencesDataSto
     name = "hermes_secure_prefs",
 )
 
+data class SavedConnection(
+    val serverUrl: String = "",
+    val apiKey: String = "",
+    val identity: String = "",
+)
+
 @Singleton
 class TokenStore @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     companion object {
         private val KEY_SERVER_URL = stringPreferencesKey("server_url")
@@ -39,29 +47,42 @@ class TokenStore @Inject constructor(
     }
 
     private val aead: Aead by lazy { createAead() }
+    @Volatile private var cachedConnection = SavedConnection()
+
+    val savedConnection: Flow<SavedConnection> = context.tokenDataStore.data
+        .map(::savedConnectionFrom)
+        .onEach { cachedConnection = it }
 
     val serverUrl: String
-        get() = readString(KEY_SERVER_URL)
+        get() = cachedConnection.serverUrl
 
     val apiKey: String
-        get() = runCatching {
-            val encrypted = readString(KEY_API_KEY)
-            if (encrypted.isEmpty()) return@runCatching ""
-            val bytes = Base64.decode(encrypted, Base64.NO_WRAP)
-            String(aead.decrypt(bytes, ByteArray(0)), Charsets.UTF_8)
-        }.getOrDefault("")
+        get() = cachedConnection.apiKey
 
-    fun hasCredentials(): Boolean = serverUrl.isNotBlank() && apiKey.isNotBlank()
+    fun hasCredentials(): Boolean = hasSavedConnection(serverUrl)
+
+    suspend fun savedConnectionOnce(): SavedConnection {
+        return savedConnection.first()
+    }
+
+    suspend fun connectionIdentity(): String = savedConnectionOnce().identity
 
     suspend fun saveCredentials(serverUrl: String, apiKey: String) {
+        val cleanServerUrl = serverUrl.cleanSavedCredentialLine()
+        val cleanApiKey = apiKey.cleanSavedCredentialLine()
         val encrypted = Base64.encodeToString(
-            aead.encrypt(apiKey.toByteArray(Charsets.UTF_8), ByteArray(0)),
+            aead.encrypt(cleanApiKey.toByteArray(Charsets.UTF_8), ByteArray(0)),
             Base64.NO_WRAP,
         )
         context.tokenDataStore.edit { prefs ->
-            prefs[KEY_SERVER_URL] = serverUrl.trim()
+            prefs[KEY_SERVER_URL] = cleanServerUrl
             prefs[KEY_API_KEY] = encrypted
         }
+        cachedConnection = SavedConnection(
+            serverUrl = cleanServerUrl,
+            apiKey = cleanApiKey,
+            identity = connectionIdentityFor(cleanServerUrl, cleanApiKey),
+        )
     }
 
     suspend fun clearCredentials() {
@@ -69,12 +90,23 @@ class TokenStore @Inject constructor(
             prefs.remove(KEY_SERVER_URL)
             prefs.remove(KEY_API_KEY)
         }
+        cachedConnection = SavedConnection()
     }
 
-    private fun readString(key: Preferences.Key<String>): String = runCatching {
-        runBlocking {
-            context.tokenDataStore.data.map { prefs -> prefs[key].orEmpty() }.first()
-        }
+    private fun savedConnectionFrom(prefs: Preferences): SavedConnection {
+        val serverUrl = prefs[KEY_SERVER_URL].orEmpty().cleanSavedCredentialLine()
+        val apiKey = decryptApiKey(prefs[KEY_API_KEY].orEmpty())
+        return SavedConnection(
+            serverUrl = serverUrl,
+            apiKey = apiKey,
+            identity = connectionIdentityFor(serverUrl, apiKey),
+        )
+    }
+
+    private fun decryptApiKey(encrypted: String): String = runCatching {
+        if (encrypted.isEmpty()) return@runCatching ""
+        val bytes = Base64.decode(encrypted, Base64.NO_WRAP)
+        String(aead.decrypt(bytes, ByteArray(0)), Charsets.UTF_8).cleanSavedCredentialLine()
     }.getOrDefault("")
 
     private fun createAead(): Aead {
@@ -93,4 +125,25 @@ class TokenStore @Inject constructor(
             .withMasterKeyUri(KEYSTORE_URI)
             .build()
     }
+}
+
+internal fun hasSavedConnection(serverUrl: String): Boolean = serverUrl.cleanSavedCredentialLine().isNotBlank()
+
+internal fun connectionIdentityFor(serverUrl: String, apiKey: String): String {
+    val normalizedServerUrl = serverUrl.cleanSavedCredentialLine()
+    if (normalizedServerUrl.isBlank()) return ""
+    return sha256Hex("$normalizedServerUrl\n${sha256Hex(apiKey.cleanSavedCredentialLine())}")
+}
+
+internal fun String.cleanSavedCredentialLine(): String {
+    return trim()
+        .lineSequence()
+        .firstOrNull()
+        .orEmpty()
+        .trim()
+}
+
+private fun sha256Hex(value: String): String {
+    val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+    return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
 }

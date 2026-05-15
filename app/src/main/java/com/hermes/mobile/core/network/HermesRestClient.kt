@@ -107,7 +107,7 @@ class HermesRestClient @Inject constructor(
 
     suspend fun fetchMessages(sessionId: String): Result<MessagesResponse> = withContext(Dispatchers.IO) {
         runCatching {
-            val request = authenticatedRequest("api/sessions/$sessionId/messages")
+            val request = authenticatedRequest(sessionMessagesPath("api", sessionId))
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val dashboard = json.decodeFromString<DashboardMessagesResponse>(response.body.string())
@@ -116,7 +116,7 @@ class HermesRestClient @Inject constructor(
                 if (response.code != 404) error("Messages failed: HTTP ${response.code}")
             }
 
-            val fallback = authenticatedRequest("v1/sessions/$sessionId/messages")
+            val fallback = authenticatedRequest(sessionMessagesPath("v1", sessionId))
             client.newCall(fallback).execute().use { response ->
                 if (!response.isSuccessful) error("Messages failed: HTTP ${response.code}")
                 json.decodeFromString<MessagesResponse>(response.body.string())
@@ -126,7 +126,7 @@ class HermesRestClient @Inject constructor(
 
     suspend fun getText(path: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val cleanPath = path.trimStart('/')
+            val cleanPath = hermesRequestPath(path)
             executeRequest("GET", cleanPath, null)
         }
     }
@@ -139,7 +139,7 @@ class HermesRestClient @Inject constructor(
 
     private suspend fun sendText(method: String, path: String, body: String?): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val cleanPath = path.trimStart('/')
+            val cleanPath = hermesRequestPath(path)
             executeRequest(method, cleanPath, body)
         }
     }
@@ -188,21 +188,61 @@ class HermesRestClient @Inject constructor(
 private val directRootPaths = setOf("health", "health/detailed")
 
 fun Request.Builder.applyBearer(apiKey: String): Request.Builder {
-    if (apiKey.isNotBlank()) {
-        header("Authorization", "Bearer $apiKey")
+    val cleanApiKey = apiKey.safeHeaderLine()
+    if (cleanApiKey.isNotBlank()) {
+        header("Authorization", "Bearer $cleanApiKey")
     }
     return this
 }
 
+internal fun String.safeHeaderLine(maxLength: Int = Int.MAX_VALUE): String {
+    return trim()
+        .lineSequence()
+        .firstOrNull()
+        .orEmpty()
+        .trim()
+        .filter { it >= ' ' && it != '\u007F' }
+        .take(maxLength)
+        .trim()
+}
+
 fun String.endpoint(path: String): String {
-    val base = trim().trimEnd('/')
-    val requestedPath = path.trimStart('/')
-    val cleanPath = if (base.endsWith("/v1") && requestedPath.startsWith("v1/")) {
-        requestedPath.removePrefix("v1/")
+    val base = trim()
+        .substringBefore("#")
+        .substringBefore("?")
+        .trimEnd('/')
+    val requestedPath = path.trim().trimStart('/')
+    val baseSegment = base.substringAfterLast("/")
+    val cleanPath = if (baseSegment in apiBaseSegments && requestedPath.startsWith("$baseSegment/")) {
+        requestedPath.removePrefix("$baseSegment/")
     } else {
         requestedPath
     }
     return "$base/$cleanPath"
+}
+
+private val apiBaseSegments = setOf("api", "v1")
+
+internal fun hermesRequestPath(path: String): String {
+    return path.cleanPathLine().trimStart('/').ifBlank { error("Hermes request path required") }
+}
+
+internal fun sessionMessagesPath(root: String, sessionId: String): String {
+    val cleanRoot = root.cleanPathLine().trim('/').ifBlank { error("Session messages root required") }
+    val cleanSessionId = sessionId.cleanPathLine().ifBlank { error("Session id required") }.encodedPathSegment()
+    return "$cleanRoot/sessions/$cleanSessionId/messages"
+}
+
+private fun String.cleanPathLine(): String {
+    return trim()
+        .lineSequence()
+        .firstOrNull()
+        .orEmpty()
+        .trim()
+}
+
+private fun String.encodedPathSegment(): String {
+    return java.net.URLEncoder.encode(this, Charsets.UTF_8.name()).replace("+", "%20")
 }
 
 private fun DashboardSessionsResponse.toSessionsResponse(): SessionsResponse {
