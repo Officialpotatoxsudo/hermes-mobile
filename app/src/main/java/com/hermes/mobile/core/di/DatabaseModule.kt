@@ -19,7 +19,13 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): HermesDatabase {
         return Room.databaseBuilder(context, HermesDatabase::class.java, "hermes.db")
-            .addMigrations(HermesDatabase.MIGRATION_1_2, HermesDatabase.MIGRATION_2_3, HermesDatabase.MIGRATION_3_4)
+            .addMigrations(
+                HermesDatabase.MIGRATION_1_2,
+                HermesDatabase.MIGRATION_2_3,
+                HermesDatabase.MIGRATION_3_4,
+                HermesDatabase.MIGRATION_4_5,
+                HermesDatabase.MIGRATION_5_6,
+            )
             .build()
     }
 

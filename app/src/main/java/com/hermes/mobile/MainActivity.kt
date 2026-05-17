@@ -37,11 +37,13 @@ class MainActivity : FragmentActivity() {
         isUnlocked = appLockManager.isUnlocked
         setContent {
             val themeMode by appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.System)
+            val appLockEnabled by appPreferences.appLockEnabled.collectAsStateWithLifecycle(initialValue = true)
             val lockTimeout by appPreferences.lockTimeout.collectAsStateWithLifecycle(
                 initialValue = com.hermes.mobile.core.settings.LockTimeout.FiveMinutes,
             )
             val lastOpenedChatSessionId by appPreferences.lastOpenedChatSessionId.collectAsStateWithLifecycle(initialValue = "")
             val savedConnection by tokenStore.savedConnection.collectAsStateWithLifecycle(initialValue = SavedConnection())
+            appLockManager.setEnabled(appLockEnabled)
             appLockManager.setLockTimeout(lockTimeout.millis)
             HermesTheme(themeMode = themeMode) {
                 Surface(
@@ -51,7 +53,8 @@ class MainActivity : FragmentActivity() {
                     Box {
                         HermesNavGraph(
                             hasCredentials = savedConnection.serverUrl.isNotBlank(),
-                            isUnlocked = isUnlocked,
+                            appLockEnabled = appLockEnabled,
+                            isUnlocked = !appLockEnabled || isUnlocked,
                             lastOpenedChatSessionId = lastOpenedChatSessionId,
                             onUnlocked = {
                                 appLockManager.unlock()

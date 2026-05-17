@@ -18,6 +18,7 @@ internal fun sessionMatchesQuery(session: SessionEntity, query: String): Boolean
     return listOf(
         sessionDisplayTitle(session.title),
         session.title.cleanSessionTextLine().orEmpty(),
+        session.lastMessagePreview.cleanSessionTextLine().orEmpty(),
         session.source.cleanSessionTextLine().orEmpty(),
         session.model.cleanSessionTextLine().orEmpty(),
     ).any { it.contains(term, ignoreCase = true) }

@@ -50,18 +50,17 @@ class ChatSessionLoadTest {
         val context = mockk<Context>(relaxed = true)
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
-        coEvery { repository.syncMessages("session-1") } returns Result.failure(RuntimeException("offline"))
-        every { repository.messages("session-1") } returns flowOf(
-            listOf(
-                MessageEntity(
-                    id = 1L,
-                    sessionId = "session-1",
-                    role = "user",
-                    content = "cached",
-                    timestamp = 1L,
-                ),
+        coEvery { repository.cachedMessages("session-1") } returns listOf(
+            MessageEntity(
+                id = 1L,
+                sessionId = "session-1",
+                role = "user",
+                content = "cached",
+                timestamp = 1L,
             ),
         )
+        coEvery { repository.syncMessages("session-1") } returns Result.failure(RuntimeException("offline"))
+        every { repository.messages("session-1") } returns flowOf(emptyList())
 
         val viewModel = ChatViewModel(
             savedStateHandle = SavedStateHandle(mapOf("activeSessionId" to "session-1")),
@@ -148,6 +147,15 @@ class ChatSessionLoadTest {
         coEvery { repository.syncMessages("session-1") } returns Result.success(Unit)
         coEvery { repository.deleteLocalMessages(any(), any()) } just runs
         coEvery { repository.saveLocalSession(any()) } just runs
+        coEvery { repository.cachedMessages("session-1") } returns listOf(
+            MessageEntity(
+                id = 1L,
+                sessionId = "session-1",
+                role = "user",
+                content = legacyContent,
+                timestamp = 1L,
+            ),
+        )
         every { repository.messages("session-1") } returns flowOf(
             listOf(
                 MessageEntity(
@@ -187,7 +195,7 @@ class ChatSessionLoadTest {
             isConnecting = true,
         )
 
-        assertEquals("using search", activityLabel(state))
+        assertEquals("searching web · running", activityLabel(state))
     }
 
     @Test
@@ -210,7 +218,7 @@ class ChatSessionLoadTest {
         )
 
         assertFalse(labels.any { it == "connecting" })
-        assertEquals(listOf("using search", "thinking", "typing", "queued"), labels)
+        assertEquals(listOf("searching web", "thinking", "typing", "queued"), labels)
     }
 
     @Test

@@ -1,19 +1,16 @@
 package com.hermes.mobile.feature.home
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,8 +35,10 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import coil3.compose.AsyncImage
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,21 +53,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.airbnb.lottie.compose.LottieAnimation
-import com.airbnb.lottie.compose.LottieCompositionSpec
-import com.airbnb.lottie.compose.LottieConstants
-import com.airbnb.lottie.compose.animateLottieCompositionAsState
-import com.airbnb.lottie.compose.rememberLottieComposition
-import com.hermes.mobile.R
 import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.core.settings.AgentProfile
 import com.hermes.mobile.core.settings.AppPreferences
@@ -77,7 +72,6 @@ import com.hermes.mobile.core.util.agentIdFromChatSessionId
 import com.hermes.mobile.core.util.formatMessageCount
 import com.hermes.mobile.core.util.formatTimestamp
 import com.hermes.mobile.feature.sessions.SessionListViewModel
-import com.hermes.mobile.ui.components.HermesCircleButton
 import com.hermes.mobile.ui.components.frostedGlass
 import kotlinx.coroutines.delay
 
@@ -115,8 +109,8 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .animateContentSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 14.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 18.dp, bottom = 104.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (rows.isEmpty()) {
                 item {
@@ -125,10 +119,10 @@ fun HomeScreen(
             } else {
                 item {
                     Text(
-                        text = "AGENTS",
-                        fontSize = 11.sp,
+                        text = "Recent",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 4.dp)
+                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
                     )
                 }
                 itemsIndexed(rows, key = { _, it -> it.sessionId }) { index, row ->
@@ -165,38 +159,71 @@ private fun HomeTopBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "Chats",
-                style = MaterialTheme.typography.headlineLarge.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            HermesCircleButton(
-                onClick = onStartChat,
-                size = 30.dp,
-                background = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary,
-                frosted = false,
-            ) { Icon(Icons.Rounded.Add, contentDescription = "Start chat", modifier = Modifier.size(16.dp)) }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Chats",
+                    style = MaterialTheme.typography.headlineLarge.copy(fontSize = 30.sp, fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Conversations and agents",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f))
+                    .clickable(onClick = onStartChat)
+                    .padding(start = 14.dp, end = 18.dp, top = 11.dp, bottom = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "New",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(18.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp),
+                .height(46.dp)
+                .clip(RoundedCornerShape(50.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(50.dp))
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Search...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+            Icon(
+                Icons.Rounded.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Search conversations",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }
@@ -209,7 +236,10 @@ data class ConversationRowModel(
     val preview: String,
     val timestamp: String,
     val agentInitial: String,
+    val usesDefaultAvatar: Boolean,
+    val avatarUri: String? = null,
     val liveState: String = "none",
+    val unreadCount: Int = 0,
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -226,10 +256,11 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp)
+            .padding(horizontal = 18.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .shadow(2.dp, RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.44f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -238,62 +269,105 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 },
             )
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AgentAvatar(row.agentInitial, active = row.liveState != "none", size = 54)
+        AgentAvatar(
+            label = row.agentInitial,
+            active = row.liveState != "none",
+            size = 46,
+            usesDefaultAvatar = row.usesDefaultAvatar,
+            avatarUri = row.avatarUri,
+        )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(row.title, style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-            Text(row.preview, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(
+                row.title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = 16.sp,
+                    fontWeight = if (row.unreadCount > 0) FontWeight.Bold else FontWeight.SemiBold,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                row.preview,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (row.unreadCount > 0) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Text(row.timestamp, style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(
+            modifier = Modifier.padding(start = 12.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                row.timestamp,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (row.unreadCount > 0) {
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        row.unreadCount.coerceAtMost(99).toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun EmptyConversationState(onStartChat: () -> Unit) {
-    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.empty_chat))
-    val progress by animateLottieCompositionAsState(
-        composition,
-        iterations = LottieConstants.IterateForever,
-        isPlaying = true,
-    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 54.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
-                shape = RoundedCornerShape(28.dp),
-                containerAlpha = 0.55f,
-                borderAlpha = 0.12f,
-            )
-            .padding(horizontal = 24.dp, vertical = 28.dp),
+            .padding(horizontal = 20.dp, vertical = 42.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LottieAnimation(
-            composition,
-            { progress },
-            modifier = Modifier.size(120.dp).padding(bottom = 16.dp),
-        )
-        Text("No conversations yet", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Start a chat to keep it here.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 6.dp, bottom = 18.dp),
-        )
-        Text(
-            "Start chat",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimary,
+        Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(24.dp))
-                .background(MaterialTheme.colorScheme.primary)
+                .clip(RoundedCornerShape(30.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f), RoundedCornerShape(30.dp))
                 .clickable(onClick = onStartChat)
-                .padding(horizontal = 18.dp, vertical = 11.dp),
-        )
+                .padding(start = 12.dp, end = 18.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Start a conversation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Pick an agent and keep the thread here.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
@@ -320,7 +394,12 @@ private fun AgentListRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AgentAvatar(agent.initial, active = session != null, size = 54)
+        AgentAvatar(
+            label = agent.initial,
+            active = session != null,
+            size = 54,
+            usesDefaultAvatar = agent.id == AppPreferences.defaultAgents.first().id,
+        )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -416,17 +495,28 @@ internal fun conversationInboxRows(
                 title = session.title?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.takeIf { it.isNotBlank() }
                     ?: agent.name,
                 agentName = agent.name,
-                preview = formatMessageCount(session.messageCount),
+                preview = session.lastMessagePreview?.takeIf { it.isNotBlank() }
+                    ?: formatMessageCount(session.messageCount),
                 timestamp = formatTimestamp(session.localLastActivityAt),
                 agentInitial = agent.initial,
+                usesDefaultAvatar = agent.id == AppPreferences.defaultAgents.first().id,
+                avatarUri = agent.avatarUri?.takeIf { it.isNotBlank() },
                 liveState = "none",
+                unreadCount = session.unreadCount,
             )
         }
 }
 
 internal fun agentRowSubtitle(agent: AgentProfile, session: SessionEntity?): String {
     return session
-        ?.let { "${formatMessageCount(it.messageCount)} · ${formatTimestamp(it.localLastActivityAt)}" }
+        ?.let {
+            val preview = it.lastMessagePreview?.takeIf { p -> p.isNotBlank() }
+            if (preview != null) {
+                preview.take(60) + if (preview.length > 60) "..." else ""
+            } else {
+                "${formatMessageCount(it.messageCount)} · ${formatTimestamp(it.localLastActivityAt)}"
+            }
+        }
         ?: agent.subtitle.cleanAgentSubtitleLine()
 }
 
@@ -448,21 +538,49 @@ private const val MAX_AGENT_SUBTITLE_LENGTH = 48
 private const val MIN_AGENT_SUBTITLE_WORD_BOUNDARY = 24
 
 @Composable
-private fun AgentAvatar(label: String, active: Boolean, size: Int = 56) {
+private fun AgentAvatar(
+    label: String,
+    active: Boolean,
+    size: Int = 56,
+    usesDefaultAvatar: Boolean = false,
+    avatarUri: String? = null,
+) {
+    val avatarPlateColor = if (usesDefaultAvatar && isSystemInDarkTheme()) {
+        Color.White.copy(alpha = 0.92f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
     Box {
         Box(
             modifier = Modifier
                 .size(size.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(avatarPlateColor)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                label,
-                color = MaterialTheme.colorScheme.onSurface,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            if (avatarUri != null) {
+                AsyncImage(
+                    model = avatarUri,
+                    contentDescription = "Agent avatar",
+                    modifier = Modifier.size((size * 0.72f).dp),
+                    contentScale = ContentScale.Crop,
+                )
+            } else if (usesDefaultAvatar) {
+                Image(
+                    painter = painterResource(id = com.hermes.mobile.R.drawable.hermes_mark),
+                    contentDescription = "Default agent avatar",
+                    modifier = Modifier.size((size * 0.72f).dp),
+                    contentScale = ContentScale.Fit,
+                )
+            } else {
+                Text(
+                    label,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
         if (active) {
             Box(

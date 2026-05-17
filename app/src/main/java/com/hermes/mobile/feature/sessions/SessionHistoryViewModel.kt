@@ -41,13 +41,34 @@ class SessionHistoryViewModel @Inject constructor(
     } else {
         repository.messages(sessionId)
     }
+    private val cachedMessages = MutableStateFlow(emptyList<MessageEntity>())
 
     val uiState: StateFlow<SessionHistoryUiState> = messageFlow
-        .combine(controls) { messages, current -> current.copy(messages = messages) }
+        .combine(controls) { messages, current -> messages to current }
+        .combine(cachedMessages) { (messages, current), cached ->
+            current.copy(messages = messages.ifEmpty { cached })
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), controls.value)
 
     init {
+        loadCachedMessages()
+        markRead()
         sync()
+    }
+
+    private fun loadCachedMessages() {
+        if (sessionId.isBlank()) return
+        viewModelScope.launch {
+            cachedMessages.value = runCatching { repository.cachedMessages(sessionId) }
+                .getOrDefault(emptyList())
+        }
+    }
+
+    private fun markRead() {
+        if (sessionId.isBlank()) return
+        viewModelScope.launch {
+            repository.markSessionRead(sessionId)
+        }
     }
 
     fun sync() {

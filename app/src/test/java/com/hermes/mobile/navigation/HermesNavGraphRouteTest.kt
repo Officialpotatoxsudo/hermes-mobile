@@ -11,6 +11,49 @@ class HermesNavGraphRouteTest {
     }
 
     @Test
+    fun appLockGateRequiresCredentialsEnabledLockAndLockedSession() {
+        assertEquals(
+            true,
+            shouldShowAppLock(
+                hasCredentials = true,
+                appLockEnabled = true,
+                isUnlocked = false,
+                currentRoute = Routes.Home,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldShowAppLock(
+                hasCredentials = true,
+                appLockEnabled = false,
+                isUnlocked = false,
+                currentRoute = Routes.Home,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldShowAppLock(
+                hasCredentials = true,
+                appLockEnabled = true,
+                isUnlocked = true,
+                currentRoute = Routes.Home,
+            ),
+        )
+    }
+
+    @Test
+    fun splashSkipsAppLockWhenSettingDisabled() {
+        assertEquals(
+            Routes.Home,
+            splashNextRoute(
+                hasCredentials = true,
+                appLockEnabled = false,
+                isUnlocked = false,
+            ),
+        )
+    }
+
+    @Test
     fun chatRouteEncodesSessionIdPathSegment() {
         assertEquals(
             "chat/telegram%3Atopic%2F42%20A",

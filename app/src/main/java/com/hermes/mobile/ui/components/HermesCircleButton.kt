@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ fun HermesCircleButton(
         Box(
             modifier = modifier
                 .size(size)
+                .minimumInteractiveComponentSize()
                 .scale(scale)
                 .clip(CircleShape)
                 .background(background)
@@ -65,6 +67,7 @@ fun HermesCircleButton(
         val baseModifier = if (frosted) {
             modifier
                 .size(size)
+                .minimumInteractiveComponentSize()
                 .frostedGlass(
                     colors = MaterialTheme.colorScheme,
                     shape = CircleShape,
@@ -74,6 +77,7 @@ fun HermesCircleButton(
         } else {
             modifier
                 .size(size)
+                .minimumInteractiveComponentSize()
                 .clip(CircleShape)
                 .background(background)
         }

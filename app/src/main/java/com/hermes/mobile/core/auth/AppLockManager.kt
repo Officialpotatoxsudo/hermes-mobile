@@ -18,10 +18,13 @@ class AppLockManager @Inject constructor() {
     @Volatile
     private var lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS
 
+    @Volatile
+    private var enabled = true
+
     private var now: () -> Long = { System.currentTimeMillis() }
 
     val isUnlocked: Boolean
-        get() = unlocked
+        get() = !enabled || unlocked
 
     fun unlock() {
         unlocked = true
@@ -29,10 +32,16 @@ class AppLockManager @Inject constructor() {
     }
 
     fun lock() {
+        if (!enabled) {
+            unlocked = true
+            backgroundedAt = 0L
+            return
+        }
         unlocked = false
     }
 
     fun onAppBackgrounded() {
+        if (!enabled) return
         if (backgroundedAt == 0L) {
             backgroundedAt = now()
         }
@@ -43,10 +52,19 @@ class AppLockManager @Inject constructor() {
     }
 
     fun isSessionExpired(): Boolean {
+        if (!enabled) return false
         if (!unlocked) return true
         val lastBackgroundedAt = backgroundedAt
         if (lastBackgroundedAt == 0L) return false
         return now() - lastBackgroundedAt >= lockTimeoutMs
+    }
+
+    fun setEnabled(value: Boolean) {
+        enabled = value
+        if (!value) {
+            unlocked = true
+            backgroundedAt = 0L
+        }
     }
 
     fun setLockTimeout(timeoutMs: Long) {

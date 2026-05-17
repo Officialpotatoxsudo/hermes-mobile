@@ -18,6 +18,7 @@ import javax.inject.Inject
 
 data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.System,
+    val appLockEnabled: Boolean = true,
     val lockTimeout: LockTimeout = LockTimeout.FiveMinutes,
     val hideChatPreviews: Boolean = true,
     val serverUrl: String = "",
@@ -31,17 +32,30 @@ class SettingsViewModel @Inject constructor(
     private val repository: HermesRepository,
 ) : ViewModel() {
     private val controls = kotlinx.coroutines.flow.MutableStateFlow(SettingsUiState())
-    val uiState: StateFlow<SettingsUiState> = combine(
+    private val preferenceState = combine(
         appPreferences.themeMode,
+        appPreferences.appLockEnabled,
         appPreferences.lockTimeout,
         appPreferences.hideChatPreviews,
-        tokenStore.savedConnection,
-        controls,
-    ) { themeMode, lockTimeout, hideChatPreviews, savedConnection, state ->
-        state.copy(
+    ) { themeMode, appLockEnabled, lockTimeout, hideChatPreviews ->
+        SettingsUiState(
             themeMode = themeMode,
+            appLockEnabled = appLockEnabled,
             lockTimeout = lockTimeout,
             hideChatPreviews = hideChatPreviews,
+        )
+    }
+
+    val uiState: StateFlow<SettingsUiState> = combine(
+        preferenceState,
+        tokenStore.savedConnection,
+        controls,
+    ) { preferences, savedConnection, state ->
+        state.copy(
+            themeMode = preferences.themeMode,
+            appLockEnabled = preferences.appLockEnabled,
+            lockTimeout = preferences.lockTimeout,
+            hideChatPreviews = preferences.hideChatPreviews,
             serverUrl = savedConnection.serverUrl,
         )
     }
@@ -64,6 +78,12 @@ class SettingsViewModel @Inject constructor(
     fun setLockTimeout(timeout: LockTimeout) {
         viewModelScope.launch {
             appPreferences.setLockTimeout(timeout)
+        }
+    }
+
+    fun setAppLockEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferences.setAppLockEnabled(enabled)
         }
     }
 

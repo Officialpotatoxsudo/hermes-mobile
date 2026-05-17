@@ -4,6 +4,7 @@ internal fun buildCustomAgentProfile(
     id: String,
     name: String,
     subtitle: String,
+    avatarUri: String? = null,
 ): AgentProfile? {
     val cleanId = id.cleanAgentId() ?: return null
     val cleanName = name.cleanProfileTextLine()?.takeCleanly(40) ?: return null
@@ -13,6 +14,7 @@ internal fun buildCustomAgentProfile(
         name = cleanName,
         subtitle = cleanSubtitle.takeCleanly(96),
         initial = cleanName.agentInitial(),
+        avatarUri = avatarUri?.takeIf { it.isNotBlank() },
     )
 }
 
@@ -36,14 +38,16 @@ internal fun upsertCustomAgent(
     current: List<AgentProfile>,
     agent: AgentProfile,
 ): List<AgentProfile> {
-    val cleanAgent = buildCustomAgentProfile(agent.id, agent.name, agent.subtitle) ?: return mergeStoredAgentProfiles(current)
+    val existing = current.firstOrNull { it.id == agent.id }
+    val avatarUri = agent.avatarUri ?: existing?.avatarUri
+    val cleanAgent = buildCustomAgentProfile(agent.id, agent.name, agent.subtitle, avatarUri) ?: return mergeStoredAgentProfiles(current)
     val defaultAgent = AppPreferences.defaultAgents.first()
     if (cleanAgent.id == defaultAgent.id) return mergeStoredAgentProfiles(current).filterNot { it.id == defaultAgent.id }
     val customAgents = mergeStoredAgentProfiles(current).filterNot { it.id == defaultAgent.id }
     if (customAgents.none { it.id == cleanAgent.id }) return customAgents + cleanAgent
 
-    return customAgents.map { existing ->
-        if (existing.id == cleanAgent.id) cleanAgent else existing
+    return customAgents.map { existingAgent ->
+        if (existingAgent.id == cleanAgent.id) cleanAgent else existingAgent
     }.distinctBy { it.id }
 }
 

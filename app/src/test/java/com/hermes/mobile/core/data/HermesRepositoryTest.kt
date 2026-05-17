@@ -1,8 +1,10 @@
 package com.hermes.mobile.core.data
 
 import android.content.Context
+import com.hermes.mobile.core.auth.SavedConnection
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.auth.connectionIdentityFor
+import com.hermes.mobile.core.data.local.LEGACY_ACCOUNT_SCOPE
 import com.hermes.mobile.core.data.local.MessageDao
 import com.hermes.mobile.core.data.local.SessionDao
 import com.hermes.mobile.core.model.MessagesResponse
@@ -16,7 +18,8 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import java.nio.file.Path
 import org.junit.jupiter.api.Test
@@ -27,11 +30,11 @@ class HermesRepositoryTest {
     lateinit var tempDir: Path
 
     @Test
-    fun sessionsSearchUsesFirstUsefulQueryLine() {
+    fun sessionsSearchUsesFirstUsefulQueryLine() = runTest {
         val sessionDao = mockk<SessionDao>()
         val tokenStore = scopedTokenStore()
         val scope = connectionIdentityFor("https://agent.example", "api-key")
-        every { sessionDao.searchFlow(scope, "planning") } returns emptyFlow()
+        every { sessionDao.searchFlow(scope, "planning") } returns flowOf(emptyList())
         val repository = HermesRepository(
             restClient = mockk<HermesRestClient>(),
             sseClient = mockk<SseClient>(),
@@ -41,7 +44,7 @@ class HermesRepositoryTest {
             appContext = testContext(),
         )
 
-        repository.sessions("\n planning \n ignored")
+        repository.sessions("\n planning \n ignored").first()
 
         verify { sessionDao.searchFlow(scope, "planning") }
     }
@@ -120,7 +123,7 @@ class HermesRepositoryTest {
         val sessionDao = mockk<SessionDao>()
         val tokenStore = scopedTokenStore()
         val scope = connectionIdentityFor("https://agent.example", "api-key")
-        every { sessionDao.getAllFlow(scope) } returns emptyFlow()
+        every { sessionDao.getAllFlow(scope) } returns flowOf(emptyList())
         val repository = HermesRepository(
             restClient = mockk<HermesRestClient>(),
             sseClient = mockk<SseClient>(),
@@ -130,9 +133,42 @@ class HermesRepositoryTest {
             appContext = testContext(),
         )
 
-        repository.sessions("")
+        runTest {
+            repository.sessions("").first()
+        }
 
         verify { sessionDao.getAllFlow(scope) }
+    }
+
+    @Test
+    fun messagesUseSavedConnectionScopeWhenSynchronousCacheIsCold() = runTest {
+        val messageDao = mockk<MessageDao>()
+        val activeScope = connectionIdentityFor("https://agent.example", "api-key")
+        val tokenStore = scopedTokenStore("scope-a").also {
+            every { it.serverUrl } returns ""
+            every { it.apiKey } returns ""
+            every { it.savedConnection } returns flowOf(
+                SavedConnection(
+                    serverUrl = "https://agent.example",
+                    apiKey = "api-key",
+                    identity = activeScope,
+                ),
+            )
+        }
+        every { messageDao.getBySessionIdFlow(LEGACY_ACCOUNT_SCOPE, "session-1") } returns flowOf(emptyList())
+        every { messageDao.getBySessionIdFlow(activeScope, "session-1") } returns flowOf(emptyList())
+        val repository = HermesRepository(
+            restClient = mockk<HermesRestClient>(),
+            sseClient = mockk<SseClient>(),
+            sessionDao = mockk<SessionDao>(),
+            messageDao = messageDao,
+            tokenStore = tokenStore,
+            appContext = testContext(),
+        )
+
+        repository.messages("session-1").first()
+
+        verify { messageDao.getBySessionIdFlow(activeScope, "session-1") }
     }
 
     @Test
@@ -171,6 +207,13 @@ class HermesRepositoryTest {
         val tokenStore = mockk<TokenStore>()
         every { tokenStore.serverUrl } returns "https://agent.example"
         every { tokenStore.apiKey } returns "api-key"
+        every { tokenStore.savedConnection } returns flowOf(
+            SavedConnection(
+                serverUrl = "https://agent.example",
+                apiKey = "api-key",
+                identity = scope.ifBlank { connectionIdentityFor("https://agent.example", "api-key") },
+            ),
+        )
         coEvery { tokenStore.connectionIdentity() } returns scope.ifBlank {
             connectionIdentityFor("https://agent.example", "api-key")
         }

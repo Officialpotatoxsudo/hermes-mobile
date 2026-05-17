@@ -45,6 +45,7 @@ data class AgentProfile(
     val name: String,
     val subtitle: String,
     val initial: String,
+    val avatarUri: String? = null,
 )
 
 @Singleton
@@ -52,6 +53,7 @@ class AppPreferences @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     private val themeKey = stringPreferencesKey("theme_mode")
+    private val appLockEnabledKey = booleanPreferencesKey("app_lock_enabled")
     private val lockTimeoutKey = stringPreferencesKey("lock_timeout")
     private val hideChatPreviewsKey = booleanPreferencesKey("hide_chat_previews")
     private val lastOpenedChatSessionIdKey = stringPreferencesKey("last_opened_chat_session_id")
@@ -66,6 +68,10 @@ class AppPreferences @Inject constructor(
     val lockTimeout: Flow<LockTimeout> = context.appPreferencesDataStore.data.map { prefs ->
         runCatching { LockTimeout.valueOf(prefs[lockTimeoutKey] ?: LockTimeout.FiveMinutes.name) }
             .getOrDefault(LockTimeout.FiveMinutes)
+    }
+
+    val appLockEnabled: Flow<Boolean> = context.appPreferencesDataStore.data.map { prefs ->
+        prefs[appLockEnabledKey] ?: true
     }
 
     val hideChatPreviews: Flow<Boolean> = context.appPreferencesDataStore.data.map { prefs ->
@@ -97,6 +103,12 @@ class AppPreferences @Inject constructor(
     suspend fun setLockTimeout(timeout: LockTimeout) {
         context.appPreferencesDataStore.edit { prefs ->
             prefs[lockTimeoutKey] = timeout.name
+        }
+    }
+
+    suspend fun setAppLockEnabled(enabled: Boolean) {
+        context.appPreferencesDataStore.edit { prefs ->
+            prefs[appLockEnabledKey] = enabled
         }
     }
 
@@ -134,13 +146,25 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    suspend fun updateAgent(id: String, name: String, subtitle: String) {
-        val agent = buildCustomAgentProfile(id, name, subtitle) ?: return
+    suspend fun updateAgent(id: String, name: String, subtitle: String, avatarUri: String? = null) {
+        val agent = buildCustomAgentProfile(id, name, subtitle, avatarUri) ?: return
         context.appPreferencesDataStore.edit { prefs ->
             val current = runCatching {
                 json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())
             }.getOrDefault(emptyList())
             prefs[agentsKey] = json.encodeToString(upsertCustomAgent(current, agent))
+        }
+    }
+
+    suspend fun updateAgentAvatar(id: String, avatarUri: String?) {
+        context.appPreferencesDataStore.edit { prefs ->
+            val current = runCatching {
+                json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())
+            }.getOrDefault(emptyList())
+            val updated = current.map { agent ->
+                if (agent.id == id) agent.copy(avatarUri = avatarUri?.takeIf { it.isNotBlank() }) else agent
+            }
+            prefs[agentsKey] = json.encodeToString(updated)
         }
     }
 

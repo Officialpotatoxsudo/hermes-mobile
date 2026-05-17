@@ -2,7 +2,6 @@ package com.hermes.mobile.core.data
 
 import android.content.Context
 import com.hermes.mobile.core.auth.TokenStore
-import com.hermes.mobile.core.auth.connectionIdentityFor
 import com.hermes.mobile.core.data.local.LEGACY_ACCOUNT_SCOPE
 import com.hermes.mobile.core.data.local.MessageDao
 import com.hermes.mobile.core.data.local.MessageEntity
@@ -17,11 +16,16 @@ import com.hermes.mobile.core.network.SseClient
 import com.hermes.mobile.core.network.SseEvent
 import com.hermes.mobile.core.util.deleteHermesMediaDirectory
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class HermesRepository @Inject constructor(
     private val restClient: HermesRestClient,
     private val sseClient: SseClient,
@@ -32,11 +36,16 @@ class HermesRepository @Inject constructor(
 ) {
     fun sessions(query: String): Flow<List<SessionEntity>> {
         val cleanQuery = query.cleanRepositoryQuery()
-        val scope = scopeSnapshot()
-        return if (cleanQuery == null) sessionDao.getAllFlow(scope) else sessionDao.searchFlow(scope, cleanQuery)
+        return accountScopeFlow().flatMapLatest { scope ->
+            if (cleanQuery == null) sessionDao.getAllFlow(scope) else sessionDao.searchFlow(scope, cleanQuery)
+        }
     }
 
-    fun messages(sessionId: String): Flow<List<MessageEntity>> = messageDao.getBySessionIdFlow(scopeSnapshot(), sessionId)
+    fun messages(sessionId: String): Flow<List<MessageEntity>> {
+        return accountScopeFlow().flatMapLatest { scope ->
+            messageDao.getBySessionIdFlow(scope, sessionId)
+        }
+    }
 
     suspend fun latestSession(): SessionEntity? = sessionDao.latest(activeScope())
 
@@ -55,6 +64,12 @@ class HermesRepository @Inject constructor(
     suspend fun saveLocalMessages(messages: List<MessageEntity>) {
         val scope = activeScope()
         messageDao.upsertAll(messages.map { it.copy(accountScope = scope, remoteBacked = false) })
+    }
+
+    suspend fun markSessionRead(sessionId: String, readAt: Long = System.currentTimeMillis()) {
+        if (sessionId.isNotBlank()) {
+            sessionDao.markRead(activeScope(), sessionId, readAt)
+        }
     }
 
     suspend fun deleteLocalMessages(sessionId: String, messageIds: List<Long>) {
@@ -93,6 +108,10 @@ class HermesRepository @Inject constructor(
         }
     }
 
+    suspend fun pushMessageToRemote(sessionId: String, role: String, content: String, timestamp: Long): Result<Unit> {
+        return restClient.pushMessage(sessionId, role, content, timestamp)
+    }
+
     suspend fun clearLocalDataForActiveConnection() {
         val scope = activeScope()
         deleteHermesMediaDirectory(appContext)
@@ -114,8 +133,10 @@ class HermesRepository @Inject constructor(
 
     suspend fun deleteText(path: String): Result<String> = restClient.deleteText(path)
 
-    private fun scopeSnapshot(): String {
-        return connectionIdentityFor(tokenStore.serverUrl, tokenStore.apiKey).ifBlank { LEGACY_ACCOUNT_SCOPE }
+    private fun accountScopeFlow(): Flow<String> {
+        return tokenStore.savedConnection
+            .map { it.identity.ifBlank { LEGACY_ACCOUNT_SCOPE } }
+            .distinctUntilChanged()
     }
 
     private suspend fun activeScope(): String {
@@ -141,6 +162,7 @@ private fun SessionDto.toEntity(accountScope: String): SessionEntity {
         messageCount = messageCount,
         model = model,
         accountScope = accountScope,
+        lastMessagePreview = title,
     )
 }
 

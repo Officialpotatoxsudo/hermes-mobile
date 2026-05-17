@@ -33,4 +33,20 @@ class AppLockManagerTest {
 
         assertFalse(manager.isSessionExpired())
     }
+
+    @Test
+    fun disabledAppLockStaysUnlockedAndDoesNotExpire() {
+        var now = 1_000L
+        val manager = AppLockManager()
+        manager.setClock { now }
+        manager.setLockTimeout(5_000L)
+
+        manager.setEnabled(false)
+        manager.lock()
+        manager.onAppBackgrounded()
+        now += 60_000L
+
+        assertTrue(manager.isUnlocked)
+        assertFalse(manager.isSessionExpired())
+    }
 }

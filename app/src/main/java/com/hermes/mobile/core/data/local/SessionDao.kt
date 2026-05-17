@@ -45,6 +45,9 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(session: SessionEntity)
 
+    @Query("UPDATE sessions SET unread_count = 0, last_read_at = :readAt WHERE account_scope = :accountScope AND id = :sessionId")
+    suspend fun markRead(accountScope: String, sessionId: String, readAt: Long)
+
     @Query("DELETE FROM sessions")
     suspend fun deleteAll()
 

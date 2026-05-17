@@ -40,10 +40,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -96,6 +96,7 @@ data class ChatModelOption(
 data class ChatUiState(
     val sessionId: String? = null,
     val agentName: String = "Hermes",
+    val agentAvatarUri: String? = null,
     val agents: List<AgentProfile> = AppPreferences.defaultAgents,
     val messages: List<ChatUiMessage> = emptyList(),
     val tools: List<ToolProgress> = emptyList(),
@@ -111,6 +112,10 @@ data class ChatUiState(
     val isStreaming: Boolean = false,
     val error: String? = null,
     val lastPrompt: PendingPrompt? = null,
+    val searchQuery: String = "",
+    val isSearchOpen: Boolean = false,
+    val matchedMessageIds: Set<String> = emptySet(),
+    val searchScrollTargetIndex: Int = -1,
 )
 
 val defaultChatModelOptions = listOf(
@@ -123,6 +128,7 @@ class ChatViewModel @Inject constructor(
     private val repository: HermesRepository,
     private val appPreferences: AppPreferences,
     @param:ApplicationContext private val appContext: Context,
+    private val streamCoordinator: ChatStreamCoordinator = ChatStreamCoordinator(repository),
 ) : ViewModel() {
     private val explicitAgentName = savedStateHandle.cleanString("agentName")
     private val initialSessionId = savedStateHandle.cleanString("activeSessionId")
@@ -140,11 +146,14 @@ class ChatViewModel @Inject constructor(
     private val sentTimestamps = ArrayDeque<Long>()
     private val messageIds = MonotonicIdGenerator()
     private var streamJob: Job? = null
+    private var visibleSessionId: String? = null
+    private var isCleared = false
     private val resumeSessionId: String? = savedStateHandle.cleanString("sessionId")
         ?: savedStateHandle.cleanString("activeSessionId")
 
     init {
         observeAgentProfileNames()
+        observeActiveStreams()
         syncModelOptions()
         resumeSessionId?.takeIf { it.isNotBlank() }?.let(::loadSession)
     }
@@ -280,6 +289,44 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(replyTarget = null) }
     }
 
+    fun openSearch() {
+        _uiState.update { it.copy(isSearchOpen = true, searchQuery = "", matchedMessageIds = emptySet(), searchScrollTargetIndex = -1) }
+    }
+
+    fun closeSearch() {
+        _uiState.update { it.copy(isSearchOpen = false, searchQuery = "", matchedMessageIds = emptySet(), searchScrollTargetIndex = -1) }
+    }
+
+    fun onSearchQueryChanged(query: String) {
+        _uiState.update { state ->
+            val matches = if (query.isBlank()) {
+                emptySet()
+            } else {
+                val lowerQuery = query.lowercase()
+                state.messages
+                    .filter { it.content.lowercase().contains(lowerQuery) }
+                    .map { it.id }
+                    .toSet()
+            }
+            val firstMatchIndex = state.messages.indexOfFirst { it.id in matches }
+            state.copy(searchQuery = query, matchedMessageIds = matches, searchScrollTargetIndex = firstMatchIndex)
+        }
+    }
+
+    fun scrollToNextMatch() {
+        val state = _uiState.value
+        if (state.matchedMessageIds.isEmpty()) return
+        val matchedIndices = state.messages
+            .mapIndexedNotNull { index, msg -> if (msg.id in state.matchedMessageIds) index else null }
+        val currentIndex = matchedIndices.indexOfFirst { it >= (state.searchScrollTargetIndex.takeIf { it >= 0 } ?: -1) }
+        val nextIndex = if (currentIndex < 0 || currentIndex >= matchedIndices.size - 1) {
+            matchedIndices.first()
+        } else {
+            matchedIndices[currentIndex + 1]
+        }
+        _uiState.update { it.copy(searchScrollTargetIndex = nextIndex) }
+    }
+
     fun togglePin(messageId: String) {
         _uiState.update { state ->
             val pinned = if (messageId in state.pinnedMessageIds) {
@@ -364,7 +411,133 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun exportConversation(format: ExportFormat): String {
+        val state = _uiState.value
+        val agentName = state.agentName
+        val sessionId = state.sessionId.orEmpty()
+        val now = java.time.Instant.now().atZone(java.time.ZoneId.systemDefault())
+        val nowStr = now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+
+        val totalUsage = state.messages.mapNotNull { it.usage }.reduceOrNull { acc, u ->
+            TokenUsage(
+                promptTokens = acc.promptTokens + u.promptTokens,
+                completionTokens = acc.completionTokens + u.completionTokens,
+                totalTokens = acc.totalTokens + u.totalTokens,
+            )
+        }
+
+        return when (format) {
+            ExportFormat.Markdown -> buildMarkdownExport(state, agentName, sessionId, nowStr, totalUsage)
+            ExportFormat.PlainText -> buildPlainTextExport(state, agentName, sessionId, nowStr, totalUsage)
+            ExportFormat.Json -> buildJsonExport(state, agentName, sessionId, nowStr, totalUsage)
+        }
+    }
+
+    private fun buildMarkdownExport(
+        state: ChatUiState,
+        agentName: String,
+        sessionId: String,
+        nowStr: String,
+        totalUsage: TokenUsage?,
+    ): String {
+        val builder = StringBuilder()
+        builder.append("# Conversation with $agentName\n\n")
+        builder.append("## Session: ${state.sessionTitle()}\n")
+        builder.append("- **Started:** ${formatExportTimestamp(state.messages.firstOrNull()?.time)}\n")
+        builder.append("- **Messages:** ${state.messages.size}\n")
+        builder.append("- **Model:** ${state.selectedModel.model}\n")
+        if (totalUsage != null) {
+            builder.append("- **Token Usage:** ${totalUsage.promptTokens} prompt, ${totalUsage.completionTokens} completion, ${totalUsage.totalTokens} total\n")
+        }
+        builder.append("- **Exported:** $nowStr\n\n")
+        builder.append("---\n\n")
+
+        state.messages.forEach { message ->
+            val role = if (message.role == "user") "You" else agentName
+            builder.append("### ${message.time} — $role\n\n")
+            builder.append(message.readableContent())
+            if (message.usage != null) {
+                builder.append("\n\n*Tokens: ${message.usage.totalTokens}*")
+            }
+            builder.append("\n\n---\n\n")
+        }
+
+        builder.append("*Exported from Hermes Mobile on $nowStr*")
+        return builder.toString()
+    }
+
+    private fun buildPlainTextExport(
+        state: ChatUiState,
+        agentName: String,
+        sessionId: String,
+        nowStr: String,
+        totalUsage: TokenUsage?,
+    ): String {
+        val builder = StringBuilder()
+        builder.append("Conversation with $agentName\n")
+        builder.append("Session: ${state.sessionTitle()}\n")
+        builder.append("Started: ${formatExportTimestamp(state.messages.firstOrNull()?.time)}\n")
+        builder.append("Messages: ${state.messages.size}\n")
+        builder.append("Model: ${state.selectedModel.model}\n")
+        if (totalUsage != null) {
+            builder.append("Token Usage: ${totalUsage.promptTokens} prompt, ${totalUsage.completionTokens} completion, ${totalUsage.totalTokens} total\n")
+        }
+        builder.append("========================================\n\n")
+
+        state.messages.forEach { message ->
+            val role = if (message.role == "user") "You" else agentName
+            builder.append("${message.time} — $role:\n")
+            builder.append(message.readableContent())
+            if (message.usage != null) {
+                builder.append("\n[Tokens: ${message.usage.totalTokens}]")
+            }
+            builder.append("\n\n")
+        }
+
+        builder.append("========================================\n")
+        builder.append("Exported from Hermes Mobile on $nowStr")
+        return builder.toString()
+    }
+
+    private fun buildJsonExport(
+        state: ChatUiState,
+        agentName: String,
+        sessionId: String,
+        nowStr: String,
+        totalUsage: TokenUsage?,
+    ): String {
+        val json = kotlinx.serialization.json.Json { prettyPrint = true }
+        val exportData = ExportData(
+            session = ExportSession(
+                id = sessionId,
+                title = state.sessionTitle(),
+                agent = agentName,
+                startedAt = formatExportTimestamp(state.messages.firstOrNull()?.time),
+                model = state.selectedModel.model,
+                messageCount = state.messages.size,
+            ),
+            usage = totalUsage?.let {
+                ExportUsage(it.promptTokens, it.completionTokens, it.totalTokens)
+            },
+            messages = state.messages.map { msg ->
+                ExportMessage(
+                    role = msg.role,
+                    content = msg.readableContent(),
+                    timestamp = msg.time,
+                    usage = msg.usage?.let { ExportUsage(it.promptTokens, it.completionTokens, it.totalTokens) },
+                )
+            },
+            exportedAt = nowStr,
+        )
+        return json.encodeToString(ExportData.serializer(), exportData)
+    }
+
+    private fun formatExportTimestamp(time: String?): String {
+        return time ?: "Unknown"
+    }
+
     fun stop() {
+        _uiState.value.sessionId?.let(streamCoordinator::stop)
         streamJob?.cancel()
         val abandonedMediaUris = _uiState.value.queuedPrompts.flatMap { it.imageUris }
         _uiState.update { state ->
@@ -391,6 +564,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun startNewSession() {
+        _uiState.value.sessionId?.let(streamCoordinator::stop)
         streamJob?.cancel()
         val abandonedMediaUris = _uiState.value.attachments.map { it.uri } +
             _uiState.value.queuedPrompts.flatMap { it.imageUris }
@@ -416,7 +590,12 @@ class ChatViewModel @Inject constructor(
             )
         }
         cleanupAppOwnedMedia(abandonedMediaUris)
-        nextSessionId?.let(::rememberOpenedSession)
+        visibleSessionId?.let(streamCoordinator::markSessionHidden)
+        visibleSessionId = null
+        nextSessionId?.let {
+            rememberOpenedSession(it)
+            markSessionVisible(it)
+        }
     }
 
     private fun undoLastExchange() {
@@ -550,71 +729,151 @@ class ChatViewModel @Inject constructor(
         savedStateHandle["activeSessionId"] = sessionId
         savedStateHandle["draft"] = ""
         rememberOpenedSession(sessionId)
+        if (!isCleared) {
+            markSessionVisible(sessionId)
+        }
+        val userMessage = MessageEntity(
+            id = userMessageId,
+            sessionId = sessionId,
+            role = "user",
+            content = displayPrompt,
+            timestamp = userMessageId,
+            imageUrisJson = imageUris.toMessageImageJson(),
+        )
         viewModelScope.launch {
             saveSessionSnapshot(sessionId)
-            repository.saveLocalMessage(
-                MessageEntity(
-                    id = userMessageId,
-                    sessionId = sessionId,
-                    role = "user",
-                    content = displayPrompt,
-                    timestamp = userMessageId,
-                    imageUrisJson = imageUris.toMessageImageJson(),
-                ),
-            )
+            repository.saveLocalMessage(userMessage)
         }
         messageStartTimes[assistantId] = System.currentTimeMillis()
-        streamJob = viewModelScope.launch {
-            val request = runCatching {
-                withContext(Dispatchers.IO) {
-                    buildCompletionRequest(
-                        model = model,
-                        priorMessages = priorMessages,
-                        prompt = prompt,
-                        imageUris = imageUris,
-                    )
-                }
-            }.getOrElse { error ->
-                val readable = ErrorMapper.userMessage(error, "Could not read selected photo")
-                failStream(assistantId, readable)
-                return@launch
-            }
-            var completed = false
-            var lastError: Throwable? = null
-            for (attempt in 0..MAX_RETRIES) {
-                if (attempt > 0) {
-                    _uiState.update { state ->
-                        state.copy(
-                            isConnecting = true,
-                            isStreaming = false,
-                            error = "Reconnecting... (attempt $attempt/$MAX_RETRIES)",
-                            connectionState = ConnectionState.Connecting,
+        val sessionSnapshot = _uiState.value.toSessionEntity(sessionId, nowMillis)
+        streamJob = streamCoordinator.start(
+            ChatStreamCommand(
+                session = sessionSnapshot,
+                userMessage = userMessage,
+                assistantMessageId = assistantMessageId,
+                requestBuilder = {
+                    withContext(Dispatchers.IO) {
+                        buildCompletionRequest(
+                            model = model,
+                            priorMessages = priorMessages,
+                            prompt = prompt,
+                            imageUris = imageUris,
                         )
                     }
-                    delay(RETRY_BACKOFF_MS[attempt - 1])
+                },
+                onFinished = {
+                    _uiState.update { state ->
+                        state.copy(
+                            isConnecting = false,
+                            isStreaming = false,
+                            connectionState = ConnectionState.Connected,
+                            messages = state.messages.map { message ->
+                                if (message.id.persistedMessageId() == assistantMessageId) {
+                                    message.copy(isStreaming = false)
+                                } else {
+                                    message
+                                }
+                            },
+                        )
+                    }
+                    _uiState.value.sessionId?.let(::persistSessionSnapshot)
+                    streamJob = null
+                    sendNextQueuedIfIdle()
+                },
+                onFailed = { readable ->
+                    failStream(assistantId, readable)
+                },
+            ),
+        )
+    }
+
+    private fun ChatUiState.toSessionEntity(sessionId: String, nowMillis: Long): SessionEntity {
+        return SessionEntity(
+            id = sessionId,
+            title = copy(sessionId = sessionId).sessionTitle(),
+            source = "mobile",
+            startedAt = nowMillis,
+            endedAt = null,
+            messageCount = messages.count { it.content.isNotBlank() || it.imageUris.isNotEmpty() },
+            model = selectedModel.model,
+            lastSyncedAt = nowMillis,
+            localLastActivityAt = nowMillis,
+            lastMessagePreview = messages.lastOrNull()?.previewContent()?.take(200),
+            unreadCount = 0,
+            lastReadAt = nowMillis,
+        )
+    }
+
+    private fun observeActiveStreams() {
+        viewModelScope.launch {
+            streamCoordinator.streams.collect { streams ->
+                val sessionId = _uiState.value.sessionId ?: return@collect
+                val snapshot = streams[sessionId] ?: return@collect
+                _uiState.update { state ->
+                    if (state.sessionId == sessionId) state.withStreamSnapshot(snapshot) else state
                 }
-                repository.streamChat(request, sessionId)
-                    .catch { error ->
-                        lastError = error
-                    }
-                    .collect { event ->
-                        when (event) {
-                            is SseEvent.Opened -> onOpened(event.sessionId, sessionId)
-                            is SseEvent.Delta -> appendDelta(assistantId, event.text)
-                            is SseEvent.Tool -> _uiState.update { it.copy(tools = it.tools + event.progress) }
-                            is SseEvent.Usage -> setUsage(assistantId, event.usage)
-                            SseEvent.Done -> {
-                                completed = true
-                                finishStream(assistantId)
-                            }
-                        }
-                    }
-                if (completed) return@launch
-                if (attempt == MAX_RETRIES) break
             }
-            val readable = ErrorMapper.userMessage(lastError, "Connection lost")
-            failStream(assistantId, readable)
         }
+    }
+
+    private fun ChatUiState.withStreamSnapshot(snapshot: ChatStreamSnapshot): ChatUiState {
+        val assistantId = "assistant-${snapshot.assistantMessageId}"
+        val assistantTime = currentTimeLabel(snapshot.assistantMessageId)
+        val messageIndex = messages.indexOfFirst { it.id.persistedMessageId() == snapshot.assistantMessageId }
+        val updatedMessages = if (messageIndex >= 0) {
+            messages.mapIndexed { index, message ->
+                if (index == messageIndex) {
+                    message.copy(
+                        content = snapshot.content.ifBlank { message.content },
+                        isStreaming = snapshot.isStreaming || snapshot.isConnecting,
+                        error = snapshot.error,
+                        usage = snapshot.usage ?: message.usage,
+                    )
+                } else {
+                    message
+                }
+            }
+        } else {
+            messages + ChatUiMessage(
+                id = assistantId,
+                role = "assistant",
+                content = snapshot.content,
+                time = assistantTime,
+                isStreaming = snapshot.isStreaming || snapshot.isConnecting,
+                error = snapshot.error,
+                usage = snapshot.usage,
+            )
+        }
+        return copy(
+            messages = updatedMessages,
+            tools = snapshot.tools,
+            isConnecting = snapshot.isConnecting,
+            isStreaming = snapshot.isStreaming,
+            error = snapshot.error,
+            connectionState = when {
+                snapshot.error != null -> ConnectionState.Error(snapshot.error)
+                snapshot.isConnecting -> ConnectionState.Connecting
+                else -> ConnectionState.Connected
+            },
+        )
+    }
+
+    private fun markSessionVisible(sessionId: String) {
+        if (isCleared) return
+        if (visibleSessionId == sessionId) {
+            streamCoordinator.markSessionVisible(sessionId)
+            return
+        }
+        visibleSessionId?.let(streamCoordinator::markSessionHidden)
+        visibleSessionId = sessionId
+        streamCoordinator.markSessionVisible(sessionId)
+    }
+
+    override fun onCleared() {
+        isCleared = true
+        visibleSessionId?.let(streamCoordinator::markSessionHidden)
+        visibleSessionId = null
+        super.onCleared()
     }
 
     private fun buildCompletionRequest(
@@ -714,9 +973,21 @@ class ChatViewModel @Inject constructor(
             )
         }
         persistStreamingAssistant(messageId)
+        // Push assistant message to remote
+        pushAssistantMessageRemote(messageId)
         _uiState.value.sessionId?.let(::persistSessionSnapshot)
         streamJob = null
         sendNextQueuedIfIdle()
+    }
+
+    private fun pushAssistantMessageRemote(messageId: String) {
+        val sessionId = _uiState.value.sessionId ?: return
+        val message = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return
+        if (message.content.isBlank()) return
+        val assistantId = messageId.persistedMessageId() ?: return
+        viewModelScope.launch {
+            repository.pushMessageToRemote(sessionId, "assistant", message.content, assistantId)
+        }
     }
 
     private fun failStream(messageId: String, readable: String) {
@@ -738,6 +1009,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun sendNextQueuedIfIdle() {
+        if (isCleared) return
         val next = _uiState.value.queuedPrompts.firstOrNull() ?: return
         if (_uiState.value.isConnecting || _uiState.value.isStreaming) return
         _uiState.update { state -> state.copy(queuedPrompts = state.queuedPrompts.drop(1)) }
@@ -790,36 +1062,54 @@ class ChatViewModel @Inject constructor(
 
     private fun loadSession(sessionId: String) {
         rememberOpenedSession(sessionId)
+        markSessionVisible(sessionId)
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     sessionId = sessionId,
                     agentName = agentNameForSession(sessionId, AppPreferences.defaultAgents, explicitAgentName ?: it.agentName),
-                    isConnecting = true,
+                    isConnecting = false,
                     error = null,
+                    connectionState = ConnectionState.Connected,
                 )
             }
+            val cachedEntities = cachedMessagesForSession(sessionId)
+            messageIds.seed(cachedEntities.maxOfOrNull { it.id } ?: 0L)
+            _uiState.update {
+                it.copy(
+                    sessionId = sessionId,
+                    messages = cachedEntities.map(MessageEntity::toChatUiMessage),
+                    isConnecting = false,
+                    connectionState = ConnectionState.Connected,
+                )
+            }
+
             var syncError: String? = null
             repository.syncMessages(sessionId)
                 .onFailure { error ->
                     if (!ErrorMapper.isEndpointNotFound(error)) {
                         syncError = ErrorMapper.userMessage(error, "Session sync failed")
-                        _uiState.update { it.copy(error = syncError) }
                     }
                 }
-            val entities = repository.messages(sessionId).first()
+            val entities = cachedMessagesForSession(sessionId).ifEmpty { cachedEntities }
             messageIds.seed(entities.maxOfOrNull { it.id } ?: 0L)
             val messages = entities.map(MessageEntity::toChatUiMessage)
             _uiState.update {
-                it.copy(
+                val next = it.copy(
                     sessionId = sessionId,
-                    messages = messages,
+                    messages = messages.ifEmpty { it.messages },
                     isConnecting = false,
                     connectionState = syncError?.let(ConnectionState::Error) ?: ConnectionState.Connected,
                     error = syncError,
                 )
+                val snapshot = streamCoordinator.streams.value[sessionId]
+                if (snapshot == null) next else next.withStreamSnapshot(snapshot)
             }
         }
+    }
+
+    private suspend fun cachedMessagesForSession(sessionId: String): List<MessageEntity> {
+        return runCatching { repository.cachedMessages(sessionId) }.getOrDefault(emptyList())
     }
 
     private fun observeAgentProfileNames() {
@@ -832,16 +1122,27 @@ class ChatViewModel @Inject constructor(
                         agents = agents,
                         fallback = explicitAgentName ?: state.agentName,
                     )
+                    val avatarUri = agentAvatarUriForSession(
+                        sessionId = state.sessionId,
+                        agents = agents,
+                    )
                     state.copy(
                         agents = agents,
                         agentName = resolved,
+                        agentAvatarUri = avatarUri,
                     )
                 }
             }
         }
     }
 
+    private fun agentAvatarUriForSession(sessionId: String?, agents: List<AgentProfile>): String? {
+        val agentId = agentIdFromChatSessionId(sessionId) ?: return null
+        return agents.firstOrNull { it.id == agentId }?.avatarUri
+    }
+
     fun switchAgent(agentId: String) {
+        _uiState.value.sessionId?.let(streamCoordinator::stop)
         streamJob?.cancel()
         val agents = _uiState.value.agents
         val agent = agents.firstOrNull { it.id == agentId } ?: return
@@ -854,6 +1155,7 @@ class ChatViewModel @Inject constructor(
             it.copy(
                 sessionId = sessionId,
                 agentName = agent.name,
+                agentAvatarUri = agent.avatarUri,
                 messages = emptyList(),
                 tools = emptyList(),
                 draft = "",
@@ -870,6 +1172,7 @@ class ChatViewModel @Inject constructor(
         }
         cleanupAppOwnedMedia(abandonedMediaUris)
         rememberOpenedSession(sessionId)
+        markSessionVisible(sessionId)
     }
 
     private fun persistSessionSnapshot(sessionId: String) {
@@ -880,6 +1183,7 @@ class ChatViewModel @Inject constructor(
         val state = _uiState.value
         val now = System.currentTimeMillis()
         val existing = runCatching { repository.cachedSession(sessionId) }.getOrNull()
+        val lastMessagePreview = state.messages.lastOrNull()?.previewContent()?.take(200)
         repository.saveLocalSession(
             SessionEntity(
                 id = sessionId,
@@ -891,6 +1195,9 @@ class ChatViewModel @Inject constructor(
                 model = existing?.model ?: state.selectedModel.model,
                 lastSyncedAt = existing?.lastSyncedAt ?: now,
                 localLastActivityAt = now,
+                lastMessagePreview = lastMessagePreview,
+                unreadCount = if (visibleSessionId == sessionId) 0 else existing?.unreadCount ?: 0,
+                lastReadAt = if (visibleSessionId == sessionId) now else existing?.lastReadAt,
             ),
         )
     }
@@ -958,6 +1265,7 @@ class ChatViewModel @Inject constructor(
                 imageUrisJson = message.imageUris.toMessageImageJson(),
             )
         }
+        val lastMessagePreview = state.messages.lastOrNull()?.previewContent()?.take(200)
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             repository.saveLocalSession(
@@ -971,6 +1279,9 @@ class ChatViewModel @Inject constructor(
                     model = state.selectedModel.model,
                     lastSyncedAt = now,
                     localLastActivityAt = now,
+                    lastMessagePreview = lastMessagePreview,
+                    unreadCount = 0,
+                    lastReadAt = now,
                 ),
             )
             repository.saveLocalMessages(messages)
@@ -1259,3 +1570,42 @@ private const val MAX_REASONABLE_CHAT_TIMESTAMP_MILLIS = 253_402_300_799_999L
 private val RETRY_BACKOFF_MS = longArrayOf(2_000L, 4_000L, 8_000L)
 private const val RATE_LIMIT_WINDOW_MS = 10_000L
 private const val RATE_LIMIT_MAX_MESSAGES = 5
+
+enum class ExportFormat {
+    Markdown,
+    PlainText,
+    Json,
+}
+
+@kotlinx.serialization.Serializable
+data class ExportData(
+    val session: ExportSession,
+    val usage: ExportUsage?,
+    val messages: List<ExportMessage>,
+    val exportedAt: String,
+)
+
+@kotlinx.serialization.Serializable
+data class ExportSession(
+    val id: String,
+    val title: String,
+    val agent: String,
+    val startedAt: String,
+    val model: String,
+    val messageCount: Int,
+)
+
+@kotlinx.serialization.Serializable
+data class ExportUsage(
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val totalTokens: Int,
+)
+
+@kotlinx.serialization.Serializable
+data class ExportMessage(
+    val role: String,
+    val content: String,
+    val timestamp: String,
+    val usage: ExportUsage?,
+)

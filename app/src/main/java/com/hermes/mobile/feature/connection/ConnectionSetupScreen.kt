@@ -71,42 +71,45 @@ fun ConnectionSetupScreen(
             .statusBarsPadding()
             .imePadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp),
-        verticalArrangement = Arrangement.Center,
+            .padding(horizontal = 22.dp),
+        verticalArrangement = Arrangement.Top,
     ) {
-        Column(
+        Spacer(Modifier.height(72.dp))
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(bottom = 28.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(colors.primaryContainer),
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.surface.copy(alpha = 0.72f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Link,
                     contentDescription = "Hermes connection",
-                    tint = colors.onPrimaryContainer,
-                    modifier = Modifier.size(36.dp),
+                    tint = colors.primary,
+                    modifier = Modifier.size(28.dp),
                 )
             }
-            Spacer(Modifier.height(20.dp))
-            Text(
-                text = "Connect to Hermes",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = colors.onBackground,
-            )
-            Text(
-                text = "Enter your server endpoint to get started",
-                style = MaterialTheme.typography.bodyLarge,
-                color = colors.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp),
-            )
+            Spacer(Modifier.size(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Connect Hermes",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onBackground,
+                )
+                Text(
+                    text = "Set endpoint and optional key.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
 
         Column(
@@ -114,11 +117,11 @@ fun ConnectionSetupScreen(
                 .fillMaxWidth()
                 .frostedGlass(
                     colors = colors,
-                    shape = RoundedCornerShape(28.dp),
-                    containerAlpha = 0.76f,
-                    borderAlpha = 0.16f,
+                    shape = RoundedCornerShape(26.dp),
+                    containerAlpha = 0.56f,
+                    borderAlpha = 0.12f,
                 )
-                .padding(20.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
             Text(
                 "Server details",
@@ -221,9 +224,9 @@ fun ConnectionSetupScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                .height(54.dp)
                 .graphicsLayer { scaleX = btnScale; scaleY = btnScale }
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(50.dp))
                 .background(
                     if (state.isChecking) colors.primary.copy(alpha = 0.6f) else colors.primary,
                 )

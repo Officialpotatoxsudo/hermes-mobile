@@ -32,8 +32,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -52,6 +55,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -78,6 +82,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -91,11 +96,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -103,6 +114,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -110,11 +122,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
@@ -142,19 +157,30 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardCommandKey
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.StopCircle
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import kotlinx.coroutines.launch
@@ -280,14 +306,21 @@ fun ChatShellScreen(
     val composerHeightDp = with(density) { composerHeightPx.toDp() }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-    val topPadding = statusBarTop + 86.dp
-    val bottomPadding = (composerHeightDp + imeBottom + 16.dp).coerceAtLeast(108.dp)
+    val topPadding = statusBarTop + 74.dp
+    val bottomPadding = (composerHeightDp + imeBottom + 20.dp).coerceAtLeast(112.dp)
     val loadingScrollState = rememberScrollState()
     val emptyScrollState = rememberScrollState()
 
     LaunchedEffect(imeBottom, state.messages.size) {
         if (state.messages.isNotEmpty()) {
             listState.animateScrollToItem(state.messages.lastIndex)
+        }
+    }
+
+    LaunchedEffect(state.searchScrollTargetIndex) {
+        val target = state.searchScrollTargetIndex
+        if (target >= 0) {
+            listState.animateScrollToItem(target)
         }
     }
 
@@ -358,7 +391,10 @@ fun ChatShellScreen(
                                 MessageBubble(
                                     message = message,
                                     agentName = state.agentName,
+                                    agentAvatarUri = state.agentAvatarUri,
                                     isPinned = message.id in state.pinnedMessageIds,
+                                    isSearchMatch = message.id in state.matchedMessageIds,
+                                    searchQuery = state.searchQuery,
                                     onRetry = viewModel::retryLast,
                                     onReply = { viewModel.replyTo(message.id) },
                                     onPin = { viewModel.togglePin(message.id) },
@@ -387,6 +423,7 @@ fun ChatShellScreen(
                                     tools = state.tools,
                                     label = activityLabel(state),
                                     agentName = state.agentName,
+                                    agentAvatarUri = state.agentAvatarUri,
                                 )
                             }
                         }
@@ -404,21 +441,36 @@ fun ChatShellScreen(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
-                ChatTopBar(
-                    agentName = state.agentName,
-                    agents = state.agents,
-                    sessionId = state.sessionId,
-                    isConnecting = state.isConnecting,
-                    isStreaming = state.isStreaming,
-                    queuedCount = state.queuedPrompts.size,
-                    connectionState = state.connectionState,
-                    activity = activityLabel(state),
-                    onHistoryClick = onHistoryClick,
-                    onNewChat = viewModel::startNewChat,
-                    onSwitchAgent = viewModel::switchAgent,
-                )
+                if (state.isSearchOpen) {
+                    ChatSearchBar(
+                        query = state.searchQuery,
+                        matchCount = state.matchedMessageIds.size,
+                        onQueryChange = viewModel::onSearchQueryChanged,
+                        onClose = viewModel::closeSearch,
+                        onNext = viewModel::scrollToNextMatch,
+                    )
+                } else {
+                    ChatTopBar(
+                        agentName = state.agentName,
+                        agentAvatarUri = state.agentAvatarUri,
+                        agents = state.agents,
+                        sessionId = state.sessionId,
+                        isConnecting = state.isConnecting,
+                        isStreaming = state.isStreaming,
+                        queuedCount = state.queuedPrompts.size,
+                        connectionState = state.connectionState,
+                        activity = activityLabel(state),
+                        onHistoryClick = onHistoryClick,
+                        onNewChat = viewModel::startNewChat,
+                        onSwitchAgent = viewModel::switchAgent,
+                        onSearchClick = viewModel::openSearch,
+                        onExportMarkdown = { shareExport(context, viewModel.exportConversation(ExportFormat.Markdown), "md") },
+                        onExportPlainText = { shareExport(context, viewModel.exportConversation(ExportFormat.PlainText), "txt") },
+                        onExportJson = { shareExport(context, viewModel.exportConversation(ExportFormat.Json), "json") },
+                    )
+                }
             }
 
             AnimatedVisibility(
@@ -444,7 +496,7 @@ fun ChatShellScreen(
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .imePadding()
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
                     .onGloballyPositioned { composerHeightPx = it.size.height },
             ) {
                 Composer(
@@ -475,6 +527,7 @@ fun ChatShellScreen(
 @Composable
 private fun ChatTopBar(
     agentName: String,
+    agentAvatarUri: String?,
     agents: List<AgentProfile>,
     sessionId: String?,
     isConnecting: Boolean,
@@ -485,6 +538,10 @@ private fun ChatTopBar(
     onHistoryClick: (String?) -> Unit,
     onNewChat: () -> Unit,
     onSwitchAgent: (String) -> Unit,
+    onSearchClick: () -> Unit,
+    onExportMarkdown: () -> Unit,
+    onExportPlainText: () -> Unit,
+    onExportJson: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var agentPickerOpen by remember { mutableStateOf(false) }
@@ -498,58 +555,54 @@ private fun ChatTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(32.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), RoundedCornerShape(32.dp))
+            .padding(start = 14.dp, top = 11.dp, end = 10.dp, bottom = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AssistantAvatar(agentName = agentName, active = isConnecting || isStreaming)
-        Box(
+        AssistantAvatar(agentName = agentName, active = isConnecting || isStreaming, avatarUri = agentAvatarUri)
+        Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 12.dp),
+                .padding(start = 12.dp, end = 8.dp)
+                .clickable { agentPickerOpen = true },
+            horizontalAlignment = Alignment.Start,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { agentPickerOpen = true },
-                horizontalAlignment = Alignment.Start,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        agentName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (agents.size > 1) {
-                        Spacer(Modifier.width(4.dp))
-                        Icon(
-                            Icons.Rounded.KeyboardArrowDown,
-                            contentDescription = "Switch agent",
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusDot(color = statusColor, active = isConnecting || isStreaming || queuedCount > 0)
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = statusColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                Text(
+                    agentName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (agents.size > 1) {
+                    Spacer(Modifier.width(5.dp))
+                    Icon(
+                        Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Switch agent",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot(color = statusColor, active = isConnecting || isStreaming || queuedCount > 0)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             DropdownMenu(
                 expanded = agentPickerOpen,
@@ -610,6 +663,16 @@ private fun ChatTopBar(
             }
         }
         IconButton(
+            onClick = onSearchClick,
+            modifier = Modifier.size(42.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Search,
+                contentDescription = "Search in chat",
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        IconButton(
             onClick = { menuOpen = true },
             modifier = Modifier
                 .size(42.dp),
@@ -641,6 +704,117 @@ private fun ChatTopBar(
                     menuOpen = false
                 },
             )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text("Export as Markdown") },
+                leadingIcon = { Icon(Icons.Rounded.Description, contentDescription = null) },
+                onClick = {
+                    onExportMarkdown()
+                    menuOpen = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Export as Plain Text") },
+                leadingIcon = { Icon(Icons.Rounded.Description, contentDescription = null) },
+                onClick = {
+                    onExportPlainText()
+                    menuOpen = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Export as JSON") },
+                leadingIcon = { Icon(Icons.Rounded.Code, contentDescription = null) },
+                onClick = {
+                    onExportJson()
+                    menuOpen = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatSearchBar(
+    query: String,
+    matchCount: Int,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onNext: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(32.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), RoundedCornerShape(32.dp))
+            .padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester),
+            decorationBox = { innerTextField ->
+                Box(modifier = Modifier.padding(vertical = 4.dp)) {
+                    if (query.isEmpty()) {
+                        Text(
+                            "Search in chat",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            singleLine = true,
+        )
+        if (query.isNotBlank()) {
+            Text(
+                if (matchCount > 0) "$matchCount" else "0",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+            IconButton(
+                onClick = onNext,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = "Next match",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Close,
+                contentDescription = "Close search",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -662,16 +836,34 @@ internal fun activityLabel(state: ChatUiState): String {
     return when {
         latestTool?.label?.isNotBlank() == true -> {
             val toolName = latestTool.tool?.takeIf { it.isNotBlank() } ?: latestTool.label
-            "using $toolName"
+            getToolStatusLabel(toolName, latestTool.status)
         }
         state.queuedPrompts.isNotEmpty() && (state.isStreaming || state.isConnecting) -> "queued"
+        state.isConnecting && state.messages.lastOrNull { it.role == "assistant" && it.isStreaming }?.content.isNullOrBlank() -> "thinking"
         state.isStreaming && state.messages.lastOrNull { it.role == "assistant" && it.isStreaming }?.content.isNullOrBlank() -> "thinking"
         state.isStreaming -> "typing"
-        state.isConnecting -> "researching"
+        state.isConnecting -> "preparing"
         state.connectionState is ConnectionState.Error -> "connection issue"
         state.connectionState == ConnectionState.Connected -> "connected"
         else -> "ready"
     }
+}
+
+private fun getToolStatusLabel(toolName: String, status: String?): String {
+    val cleanTool = toolName.lowercase().replace(Regex("[^a-z0-9_]"), "")
+    val action = when {
+        cleanTool.contains("web") || cleanTool.contains("search") || cleanTool.contains("browse") -> "searching web"
+        cleanTool.contains("database") || cleanTool.contains("db") || cleanTool.contains("sql") -> "querying database"
+        cleanTool.contains("code") || cleanTool.contains("exec") || cleanTool.contains("run") -> "running code"
+        cleanTool.contains("file") || cleanTool.contains("read") || cleanTool.contains("write") -> "reading files"
+        cleanTool.contains("reason") || cleanTool.contains("think") -> "reasoning"
+        cleanTool.contains("plan") -> "planning"
+        cleanTool.contains("memory") -> "using memory"
+        cleanTool.contains("skill") -> "using skill"
+        else -> "using ${toolName.replace('_', ' ').trim().ifBlank { "tool" }}"
+    }
+    val cleanStatus = status?.trim()?.takeIf { it.isNotBlank() }
+    return cleanStatus?.let { "$action · $it" } ?: action
 }
 
 internal fun chatStatusLabel(
@@ -697,10 +889,6 @@ private fun InitialLoadingState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LoadingSkeletonBubble(width = 210, alignEnd = false)
-        Spacer(Modifier.height(10.dp))
-        LoadingSkeletonBubble(width = 170, alignEnd = true)
-        Spacer(Modifier.height(12.dp))
         Box(
             modifier = Modifier
                 .frostedGlass(
@@ -728,75 +916,56 @@ private fun InitialLoadingState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun LoadingSkeletonBubble(width: Int, alignEnd: Boolean) {
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = if (alignEnd) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(width.dp)
-                .height(54.dp)
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
-                    shape = RoundedCornerShape(24.dp),
-                    containerAlpha = 0.42f,
-                    borderAlpha = 0.12f,
-                ),
-        )
-    }
-}
-
-@Composable
 private fun WelcomeEmptyState(
     agentName: String,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.Center,
+        modifier = modifier.padding(start = 22.dp, end = 22.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 560.dp),
-            horizontalAlignment = Alignment.Start,
+                .widthIn(max = 560.dp)
+                .clip(RoundedCornerShape(32.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.52f))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f), RoundedCornerShape(32.dp))
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlass(
-                        colors = MaterialTheme.colorScheme,
-                        shape = RoundedCornerShape(26.dp),
-                        containerAlpha = 0.66f,
-                        borderAlpha = 0.14f,
-                    )
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Rounded.AutoAwesome,
                     contentDescription = "$agentName assistant",
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(24.dp),
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Start chat with $agentName",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        "No messages yet.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Start chat with $agentName",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "Composer is ready.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -882,7 +1051,10 @@ private fun PinnedStrip(messages: List<ChatUiMessage>) {
 private fun MessageBubble(
     message: ChatUiMessage,
     agentName: String,
+    agentAvatarUri: String?,
     isPinned: Boolean,
+    isSearchMatch: Boolean = false,
+    searchQuery: String = "",
     onRetry: () -> Unit,
     onReply: () -> Unit,
     onPin: () -> Unit,
@@ -895,7 +1067,10 @@ private fun MessageBubble(
         AssistantMessageRow(
             message = message,
             agentName = agentName,
+            agentAvatarUri = agentAvatarUri,
             isPinned = isPinned,
+            isSearchMatch = isSearchMatch,
+            searchQuery = searchQuery,
             onRetry = onRetry,
             onReply = onReply,
             onPin = onPin,
@@ -917,6 +1092,7 @@ private fun MessageBubble(
 
     BoxWithConstraints(modifier.fillMaxWidth().animateContentSize(), contentAlignment = alignment) {
         val maxBubbleWidth = maxWidth * 0.82f
+        val searchBorderColor = MaterialTheme.colorScheme.tertiary
         Box {
             Column(
                 modifier = Modifier
@@ -925,6 +1101,13 @@ private fun MessageBubble(
                     .scale(scale)
                     .clip(bubbleShape)
                     .background(bubbleColor)
+                    .then(
+                        if (isSearchMatch) {
+                            Modifier.border(2.dp, searchBorderColor, bubbleShape)
+                        } else {
+                            Modifier
+                        }
+                    )
                     .pointerInput(message.id) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -987,7 +1170,7 @@ private fun MessageBubble(
                     }
                 }
                 if (visibleContent.isNotBlank()) {
-                    RichMessageText(visibleContent, textColor)
+                    RichMessageText(visibleContent, textColor, searchQuery)
                 }
                 message.error?.let {
                     Text(
@@ -1049,7 +1232,10 @@ private fun MessageBubble(
 private fun AssistantMessageRow(
     message: ChatUiMessage,
     agentName: String,
+    agentAvatarUri: String?,
     isPinned: Boolean,
+    isSearchMatch: Boolean = false,
+    searchQuery: String = "",
     onRetry: () -> Unit,
     onReply: () -> Unit,
     onPin: () -> Unit,
@@ -1063,6 +1249,7 @@ private fun AssistantMessageRow(
     val animatedDrag by animateFloatAsState(dragOffset, label = "assistantReplyDrag")
     val cardShape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
     val visibleContent = visibleMessageText(message.content, message.imageUris.size)
+    val searchBorderColor = MaterialTheme.colorScheme.tertiary
 
     Box(modifier.fillMaxWidth().animateContentSize()) {
         Row(
@@ -1091,10 +1278,17 @@ private fun AssistantMessageRow(
                         menuOpen = true
                     },
                 )
+                .then(
+                    if (isSearchMatch) {
+                        Modifier.border(2.dp, searchBorderColor, cardShape)
+                    } else {
+                        Modifier
+                    }
+                )
                 .padding(horizontal = 2.dp, vertical = 4.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            AssistantAvatar(agentName = agentName, active = message.isStreaming)
+            AssistantAvatar(agentName = agentName, active = message.isStreaming, avatarUri = agentAvatarUri)
             Spacer(Modifier.width(10.dp))
             Column(
                 modifier = Modifier
@@ -1158,7 +1352,7 @@ private fun AssistantMessageRow(
                 }
                 Spacer(Modifier.height(8.dp))
                 if (visibleContent.isNotBlank()) {
-                    RichMessageText(visibleContent, textColor)
+                    RichMessageText(visibleContent, textColor, searchQuery)
                 }
                 if (message.isStreaming && message.content.isBlank()) {
                     Row(
@@ -1222,17 +1416,35 @@ private fun AssistantMessageRow(
 }
 
 @Composable
-private fun AssistantAvatar(agentName: String, active: Boolean) {
+private fun AssistantAvatar(agentName: String, active: Boolean, avatarUri: String? = null) {
+    val avatarPlateColor = if (isSystemInDarkTheme()) {
+        Color.White.copy(alpha = 0.92f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    }
     Box(
-        modifier = Modifier.size(34.dp),
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(avatarPlateColor)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.26f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            painter = painterResource(id = com.hermes.mobile.R.drawable.hermes_mark),
-            contentDescription = "$agentName profile",
-            modifier = Modifier.size(30.dp),
-            contentScale = ContentScale.Fit,
-        )
+        if (avatarUri != null) {
+            AsyncImage(
+                model = avatarUri,
+                contentDescription = "$agentName profile",
+                modifier = Modifier.size(31.dp),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Image(
+                painter = painterResource(id = com.hermes.mobile.R.drawable.hermes_mark),
+                contentDescription = "$agentName profile",
+                modifier = Modifier.size(31.dp),
+                contentScale = ContentScale.Fit,
+            )
+        }
         if (active) {
             Dot(
                 modifier = Modifier
@@ -1347,56 +1559,567 @@ private fun QueuedPromptRow(prompt: PendingPrompt, onCancel: () -> Unit) {
 }
 
 @Composable
-private fun RichMessageText(text: String, color: Color) {
-    Text(
-        text = remember(text, color) { markdownLite(text, color) },
-        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp),
-        color = color,
-    )
-}
-
-private fun markdownLite(text: String, color: Color): AnnotatedString = buildAnnotatedString {
-    text.lineSequence().forEachIndexed { lineIndex, rawLine ->
-        if (lineIndex > 0) append("\n")
-        val line = when {
-            rawLine.startsWith("### ") -> rawLine.removePrefix("### ")
-            rawLine.startsWith("## ") -> rawLine.removePrefix("## ")
-            rawLine.startsWith("# ") -> rawLine.removePrefix("# ")
-            rawLine.startsWith("- ") -> "• ${rawLine.removePrefix("- ")}"
-            rawLine.startsWith("* ") -> "• ${rawLine.removePrefix("* ")}"
-            else -> rawLine
-        }
-        val heading = rawLine.startsWith("#")
-        val baseStart = length
-        appendInlineMarkdown(line, color)
-        if (heading) {
-            addStyle(SpanStyle(fontWeight = FontWeight.Bold), baseStart, length)
+private fun RichMessageText(text: String, color: Color, searchQuery: String = "") {
+    val parsed = remember(text, color) { parseMarkdown(text, color) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        parsed.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Text -> {
+                    val highlighted = if (searchQuery.isNotBlank()) {
+                        highlightSearchMatches(block.content, searchQuery, color)
+                    } else {
+                        block.content
+                    }
+                    Text(
+                        text = highlighted,
+                        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp),
+                    )
+                }
+                is MarkdownBlock.CodeBlock -> CodeBlockView(block.language, block.content, color)
+                is MarkdownBlock.Diagram -> DiagramCanvasView(block.type, block.content, color)
+                is MarkdownBlock.Table -> TableView(block.headers, block.rows, color)
+                is MarkdownBlock.Blockquote -> BlockquoteView(block.content, color)
+                is MarkdownBlock.HorizontalRule -> HorizontalDivider(
+                    color = color.copy(alpha = 0.2f),
+                    thickness = 1.dp,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                is MarkdownBlock.TaskList -> TaskListView(block.items, color)
+            }
+            if (block !is MarkdownBlock.HorizontalRule) {
+                Spacer(Modifier.height(4.dp))
+            }
         }
     }
 }
 
-private fun AnnotatedString.Builder.appendInlineMarkdown(line: String, color: Color) {
-    var index = 0
-    val pattern = Regex("""(\*\*[^*]+\*\*|`[^`]+`)""")
-    pattern.findAll(line).forEach { match ->
-        append(line.substring(index, match.range.first))
-        val token = match.value
-        val start = length
-        val clean = token.trim('*', '`')
-        append(clean)
-        val style = if (token.startsWith("`")) {
-            SpanStyle(
-                fontFamily = FontFamily.Monospace,
-                background = color.copy(alpha = 0.12f),
+sealed class MarkdownBlock {
+    data class Text(val content: AnnotatedString) : MarkdownBlock()
+    data class CodeBlock(val language: String, val content: String) : MarkdownBlock()
+    data class Diagram(val type: String, val content: String) : MarkdownBlock()
+    data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
+    data class Blockquote(val content: AnnotatedString) : MarkdownBlock()
+    data object HorizontalRule : MarkdownBlock()
+    data class TaskList(val items: List<TaskItem>) : MarkdownBlock()
+    data class TaskItem(val completed: Boolean, val content: AnnotatedString)
+}
+
+@Composable
+private fun CodeBlockView(language: String, content: String, color: Color) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.08f))
+            .padding(12.dp),
+    ) {
+        if (language.isNotBlank()) {
+            Text(
+                text = language,
+                style = MaterialTheme.typography.labelSmall,
+                color = color.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
+        SelectionContainer {
+            Text(
+                text = content,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 20.sp,
+                ),
                 color = color,
             )
-        } else {
-            SpanStyle(fontWeight = FontWeight.Bold)
         }
-        addStyle(style, start, length)
-        index = match.range.last + 1
     }
-    append(line.substring(index))
+}
+
+@Composable
+private fun DiagramCanvasView(type: String, content: String, color: Color) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.06f))
+            .border(1.dp, color.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+            .padding(12.dp),
+    ) {
+        Text(
+            type.ifBlank { "diagram" }.lowercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = color.copy(alpha = 0.6f),
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+        SelectionContainer {
+            Text(
+                text = content,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 20.sp,
+                ),
+                color = color,
+            )
+        }
+    }
+}
+
+private data class DiagramNode(
+    val id: String,
+    val label: String,
+    val shape: String = "rect",
+)
+
+private data class DiagramEdge(
+    val from: String,
+    val to: String,
+    val label: String = "",
+    val style: String = "solid",
+)
+
+private data class ParsedDiagram(
+    val nodes: List<DiagramNode>,
+    val edges: List<DiagramEdge>,
+    val direction: String = "TD",
+)
+
+private fun parseDiagram(content: String): ParsedDiagram {
+    val lines = content.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+    val direction = when {
+        lines.firstOrNull()?.startsWith("graph ") == true -> lines.first().substringAfter("graph ").take(2)
+        lines.firstOrNull()?.startsWith("flowchart ") == true -> lines.first().substringAfter("flowchart ").take(2)
+        else -> "TD"
+    }
+    val nodes = mutableMapOf<String, DiagramNode>()
+    val edges = mutableListOf<DiagramEdge>()
+
+    for (line in lines) {
+        if (line.startsWith("graph ") || line.startsWith("flowchart ") || line.startsWith("sequenceDiagram")) continue
+        if (line.startsWith("classDef") || line.startsWith("class ") || line.startsWith("style ")) continue
+        if (line.startsWith("%%") || line.startsWith("#")) continue
+
+        val edgeMatch = Regex("([A-Za-z0-9_]+)\\s*(?:\\[([^\\]]+)]|\\{([^}]+)}|\\(([^)]+)\\)|\\(\\(([^)]+)\\)\\))?\\s*(?:--[-.]>(?:\\|([^|]*)\\|)?|==>[^|]*(?:\\|([^|]*)\\|)?|-\\.-[^|]*(?:\\|([^|]*)\\|)?)").find(line)
+        if (edgeMatch != null) {
+            val fromId = edgeMatch.groupValues[1]
+            val toId = line.substringAfter("-->").substringAfter("==>").substringBefore("[").substringBefore("{").substringBefore("(").trim()
+                .takeIf { it.isNotBlank() } ?: run {
+                    val afterArrow = line.substringAfter("-->").substringAfter("==>")
+                    Regex("[A-Za-z0-9_]+").find(afterArrow)?.value.orEmpty()
+                }
+            val label = edgeMatch.groupValues.drop(6).firstOrNull { it.isNotBlank() } ?: ""
+            val nodeLabel = edgeMatch.groupValues.drop(2).firstOrNull { it.isNotBlank() } ?: fromId
+
+            if (fromId !in nodes) {
+                val shape = when {
+                    line.contains("{$fromId") || line.contains("{$fromId") -> "diamond"
+                    line.contains("($fromId") -> "circle"
+                    line.contains("(($fromId)") -> "rounded"
+                    else -> "rect"
+                }
+                nodes[fromId] = DiagramNode(fromId, nodeLabel, shape)
+            }
+            if (toId.isNotBlank() && toId !in nodes) {
+                val toLabelMatch = Regex("$toId\\s*\\[([^\\]]+)\\]").find(line)
+                val toLabel = toLabelMatch?.groupValues?.getOrNull(1) ?: toId
+                nodes[toId] = DiagramNode(toId, toLabel, "rect")
+            }
+            if (toId.isNotBlank()) {
+                val style = when {
+                    line.contains("-->") -> "solid"
+                    line.contains("==>") -> "thick"
+                    line.contains("-.-") -> "dotted"
+                    else -> "solid"
+                }
+                edges.add(DiagramEdge(fromId, toId, label, style))
+            }
+        } else {
+            val nodeMatch = Regex("([A-Za-z0-9_]+)\\s*\\[([^\\]]+)\\]").find(line)
+                ?: Regex("([A-Za-z0-9_]+)\\s*\\{([^}]+)\\}").find(line)
+                ?: Regex("([A-Za-z0-9_]+)\\s*\\(([^)]+)\\)").find(line)
+            if (nodeMatch != null) {
+                val id = nodeMatch.groupValues[1]
+                val label = nodeMatch.groupValues[2]
+                val shape = when {
+                    line.contains("{$id") -> "diamond"
+                    line.contains("($id") && !line.contains("(($id)") -> "circle"
+                    line.contains("(($id)") -> "rounded"
+                    else -> "rect"
+                }
+                nodes[id] = DiagramNode(id, label, shape)
+            }
+        }
+    }
+
+    return ParsedDiagram(nodes.values.toList(), edges, direction)
+}
+
+private fun DrawScope.drawDiagram(diagram: ParsedDiagram, color: Color) {
+    if (diagram.nodes.isEmpty()) {
+        drawIntoCanvas { canvas ->
+            val paint = android.graphics.Paint().apply {
+                this.color = android.graphics.Color.parseColor("#80808080")
+                textSize = 14.sp.toPx()
+            }
+            canvas.nativeCanvas.drawText("No diagram data", size.width / 2 - 60, size.height / 2, paint)
+        }
+        return
+    }
+
+    val isHorizontal = diagram.direction in listOf("LR", "RL")
+    val nodeWidth = 120f
+    val nodeHeight = 40f
+    val padding = 30f
+
+    val nodePositions = mutableMapOf<String, Offset>()
+
+    val cols = if (isHorizontal) 1 else kotlin.math.ceil(kotlin.math.sqrt(diagram.nodes.size.toDouble())).toInt().coerceAtLeast(1)
+
+    diagram.nodes.forEachIndexed { index, node ->
+        val row = index / cols
+        val col = index % cols
+        val x = if (isHorizontal) {
+            padding + index * (nodeWidth + padding)
+        } else {
+            padding + col * (nodeWidth + padding)
+        }
+        val y = if (isHorizontal) {
+            padding
+        } else {
+            padding + row * (nodeHeight + padding * 2)
+        }
+        nodePositions[node.id] = Offset(x, y)
+    }
+
+    for (edge in diagram.edges) {
+        val fromPos = nodePositions[edge.from] ?: continue
+        val toPos = nodePositions[edge.to] ?: continue
+
+        val startX = fromPos.x + nodeWidth / 2
+        val startY = fromPos.y + nodeHeight
+        val endX = toPos.x + nodeWidth / 2
+        val endY = toPos.y
+
+        val edgeColor = color.copy(alpha = 0.6f).toArgb()
+        val path = android.graphics.Path()
+        path.moveTo(startX, startY)
+        val midY = (startY + endY) / 2
+        path.cubicTo(startX, midY, endX, midY, endX, endY)
+
+        val paint = android.graphics.Paint().apply {
+            this.color = edgeColor
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = when (edge.style) {
+                "dotted" -> 1.5f
+                "thick" -> 3f
+                else -> 1.5f
+            }
+            if (edge.style == "dotted") {
+                pathEffect = android.graphics.DashPathEffect(floatArrayOf(6f, 4f), 0f)
+            }
+        }
+        drawIntoCanvas { it.nativeCanvas.drawPath(path, paint) }
+
+        val arrowSize = 8f
+        val arrowPath = Path()
+        arrowPath.moveTo(endX, endY)
+        arrowPath.lineTo(endX - arrowSize / 2, endY - arrowSize)
+        arrowPath.lineTo(endX + arrowSize / 2, endY - arrowSize)
+        arrowPath.close()
+        drawPath(arrowPath, color = color.copy(alpha = 0.6f))
+    }
+
+    val textPaint = android.graphics.Paint().apply {
+        this.color = color.toArgb()
+        textSize = 12.sp.toPx()
+        textAlign = android.graphics.Paint.Align.LEFT
+    }
+
+    for (node in diagram.nodes) {
+        val pos = nodePositions[node.id] ?: continue
+        val nodeColor = color.copy(alpha = 0.12f).toArgb()
+        val borderColor = color.copy(alpha = 0.5f).toArgb()
+
+        val shapePath = android.graphics.Path()
+        when (node.shape) {
+            "circle" -> {
+                shapePath.addOval(
+                    android.graphics.RectF(pos.x, pos.y, pos.x + nodeWidth, pos.y + nodeHeight),
+                    android.graphics.Path.Direction.CW,
+                )
+            }
+            "diamond" -> {
+                val cx = pos.x + nodeWidth / 2
+                val cy = pos.y + nodeHeight / 2
+                shapePath.moveTo(cx, pos.y)
+                shapePath.lineTo(pos.x + nodeWidth, cy)
+                shapePath.lineTo(cx, pos.y + nodeHeight)
+                shapePath.lineTo(pos.x, cy)
+                shapePath.close()
+            }
+            "rounded" -> {
+                shapePath.addRoundRect(
+                    android.graphics.RectF(pos.x, pos.y, pos.x + nodeWidth, pos.y + nodeHeight),
+                    20f, 20f, android.graphics.Path.Direction.CW
+                )
+            }
+            else -> {
+                shapePath.addRect(
+                    android.graphics.RectF(pos.x, pos.y, pos.x + nodeWidth, pos.y + nodeHeight),
+                    android.graphics.Path.Direction.CW
+                )
+            }
+        }
+
+        val fillPaint = android.graphics.Paint().apply {
+            this.color = nodeColor
+            style = android.graphics.Paint.Style.FILL
+        }
+        val borderPaint = android.graphics.Paint().apply {
+            this.color = borderColor
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 1.5f
+        }
+
+        drawIntoCanvas { canvas ->
+            canvas.nativeCanvas.drawPath(shapePath, fillPaint)
+            canvas.nativeCanvas.drawPath(shapePath, borderPaint)
+            canvas.nativeCanvas.drawText(node.label.take(20), pos.x + 8, pos.y + nodeHeight / 2 + 4, textPaint)
+        }
+    }
+}
+
+@Composable
+private fun TableView(headers: List<String>, rows: List<List<String>>, color: Color) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.06f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(color.copy(alpha = 0.12f))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            headers.forEachIndexed { index, header ->
+                Text(
+                    text = header,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = color,
+                    modifier = Modifier.weight(1f).padding(end = if (index < headers.lastIndex) 8.dp else 0.dp),
+                )
+            }
+        }
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                row.forEachIndexed { index, cell ->
+                    Text(
+                        text = cell,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = color.copy(alpha = 0.85f),
+                        modifier = Modifier.weight(1f).padding(end = if (index < row.lastIndex) 8.dp else 0.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlockquoteView(content: AnnotatedString, color: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .background(color.copy(alpha = 0.3f))
+                .clip(RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = content,
+            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp),
+            color = color.copy(alpha = 0.85f),
+        )
+    }
+}
+
+@Composable
+private fun TaskListView(items: List<MarkdownBlock.TaskItem>, color: Color) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        items.forEach { item ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (item.completed) "☑" else "☐",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = color,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(
+                    text = item.content,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        lineHeight = 23.sp,
+                        textDecoration = if (item.completed) TextDecoration.LineThrough else null,
+                    ),
+                    color = if (item.completed) color.copy(alpha = 0.6f) else color,
+                )
+            }
+        }
+    }
+}
+
+private fun parseMarkdown(text: String, color: Color): List<MarkdownBlock> {
+    val blocks = mutableListOf<MarkdownBlock>()
+    val lines = text.lines()
+    var i = 0
+
+    while (i < lines.size) {
+        val line = lines[i]
+
+        when {
+            line.matches(Regex("^(`{3,}|~{3,})(\\w*)$")) -> {
+                val fence = line.takeWhile { it == '`' || it == '~' }
+                val lang = line.removePrefix(fence).trim()
+                val contentLines = mutableListOf<String>()
+                i++
+                while (i < lines.size && !lines[i].trim().startsWith(fence)) {
+                    contentLines.add(lines[i])
+                    i++
+                }
+                i++
+                val content = contentLines.joinToString("\n")
+                if (lang.lowercase() in setOf("mermaid", "diagram", "graph", "flowchart", "sequencediagram")) {
+                    blocks.add(MarkdownBlock.Diagram(lang, content))
+                } else {
+                    blocks.add(MarkdownBlock.CodeBlock(lang, content))
+                }
+            }
+            line.matches(Regex("^---+$")) || line.matches(Regex("^\\*\\*\\*+$")) || line.matches(Regex("^___+$")) -> {
+                blocks.add(MarkdownBlock.HorizontalRule)
+                i++
+            }
+            line.startsWith("> ") || line == ">" -> {
+                val quoteLines = mutableListOf<String>()
+                while (i < lines.size && (lines[i].startsWith("> ") || lines[i] == ">")) {
+                    quoteLines.add(lines[i].removePrefix(">").removePrefix(" "))
+                    i++
+                }
+                blocks.add(MarkdownBlock.Blockquote(parseInlineMarkdown(quoteLines.joinToString("\n"), color)))
+            }
+            line.matches(Regex("^\\|.*\\|$")) && i + 1 < lines.size && lines[i + 1].matches(Regex("^\\|[\\s:|-]+\\|$")) -> {
+                val headers = line.removePrefix("|").removeSuffix("|").split("|").map { it.trim() }
+                i += 2
+                val rows = mutableListOf<List<String>>()
+                while (i < lines.size && lines[i].matches(Regex("^\\|.*\\|$"))) {
+                    rows.add(lines[i].removePrefix("|").removeSuffix("|").split("|").map { it.trim() })
+                    i++
+                }
+                blocks.add(MarkdownBlock.Table(headers, rows))
+            }
+            line.matches(Regex("^- \\[[ xX]\\] .+")) -> {
+                val items = mutableListOf<MarkdownBlock.TaskItem>()
+                while (i < lines.size && lines[i].matches(Regex("^- \\[[ xX]\\] .+"))) {
+                    val completed = lines[i].contains("- [x]") || lines[i].contains("- [X]")
+                    val content = lines[i].substringAfter("] ").trim()
+                    items.add(MarkdownBlock.TaskItem(completed, parseInlineMarkdown(content, color)))
+                    i++
+                }
+                blocks.add(MarkdownBlock.TaskList(items))
+            }
+            line.isBlank() -> {
+                i++
+            }
+            else -> {
+                val textLines = mutableListOf<String>()
+                while (i < lines.size && lines[i].isNotBlank() &&
+                    !lines[i].matches(Regex("^(`{3,}|~{3,})(\\w*)$")) &&
+                    !lines[i].matches(Regex("^---+$")) &&
+                    !lines[i].matches(Regex("^\\*\\*\\*+$")) &&
+                    !lines[i].matches(Regex("^___+$")) &&
+                    !lines[i].startsWith("> ") &&
+                    !lines[i].matches(Regex("^\\|.*\\|$")) &&
+                    !lines[i].matches(Regex("^- \\[[ xX]\\] .+"))) {
+                    textLines.add(lines[i])
+                    i++
+                }
+                if (textLines.isNotEmpty()) {
+                    blocks.add(MarkdownBlock.Text(parseInlineMarkdown(textLines.joinToString("\n"), color)))
+                }
+            }
+        }
+    }
+    return blocks
+}
+
+private fun parseInlineMarkdown(text: String, color: Color): AnnotatedString = buildAnnotatedString {
+    var remaining = text
+    val linkPattern = Regex("\\[([^\\]]+)\\]\\(([^)]+)\\)")
+    val boldPattern = Regex("\\*\\*([^*]+)\\*\\*")
+    val italicPattern = Regex("\\*([^*]+)\\*")
+    val codePattern = Regex("`([^`]+)`")
+    val urlPattern = Regex("(https?://[^\\s]+)")
+
+    while (remaining.isNotEmpty()) {
+        val linkMatch = linkPattern.find(remaining)
+        val boldMatch = boldPattern.find(remaining)
+        val italicMatch = italicPattern.find(remaining)
+        val codeMatch = codePattern.find(remaining)
+        val urlMatch = urlPattern.find(remaining)
+
+        val matches = listOfNotNull(linkMatch, boldMatch, italicMatch, codeMatch, urlMatch)
+            .sortedBy { it.range.first }
+            .distinctBy { it.range.first }
+
+        if (matches.isEmpty()) {
+            append(remaining)
+            break
+        }
+
+        val first = matches.first()
+        if (first.range.first > 0) {
+            append(remaining.substring(0, first.range.first))
+        }
+
+        val start = length
+        when {
+            first == linkMatch -> {
+                val linkText = first.groupValues[1]
+                val url = first.groupValues[2]
+                append(linkText)
+                addStyle(SpanStyle(color = color.copy(alpha = 0.8f), textDecoration = TextDecoration.Underline), start, length)
+                addStringAnnotation(tag = "URL", annotation = url, start = start, end = length)
+            }
+            first == codeMatch -> {
+                append(first.groupValues[1])
+                addStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = color.copy(alpha = 0.12f)), start, length)
+            }
+            first == boldMatch -> {
+                append(first.groupValues[1])
+                addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, length)
+            }
+            first == italicMatch -> {
+                append(first.groupValues[1])
+                addStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), start, length)
+            }
+            first == urlMatch -> {
+                append(first.value)
+                addStyle(SpanStyle(color = color.copy(alpha = 0.8f), textDecoration = TextDecoration.Underline), start, length)
+                addStringAnnotation(tag = "URL", annotation = first.value, start = start, end = length)
+            }
+        }
+        remaining = remaining.substring(first.range.last + 1)
+    }
 }
 
 @Composable
@@ -1404,6 +2127,7 @@ private fun ThinkingIndicator(
     tools: List<ToolProgress>,
     label: String,
     agentName: String,
+    agentAvatarUri: String?,
 ) {
     Row(
         modifier = Modifier
@@ -1411,7 +2135,7 @@ private fun ThinkingIndicator(
             .padding(horizontal = 2.dp, vertical = 4.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        AssistantAvatar(agentName = agentName, active = true)
+        AssistantAvatar(agentName = agentName, active = true, avatarUri = agentAvatarUri)
         Spacer(Modifier.width(10.dp))
         Column(
             modifier = Modifier
@@ -1488,6 +2212,7 @@ private fun ToolStep(tool: ToolProgress, isActive: Boolean) {
     val statusText = tool.status?.takeIf { it.isNotBlank() }
     var expanded by remember(tool.label) { mutableStateOf(false) }
     val hasDetail = statusText != null && (statusText.length > 80 || statusText.lines().size > 2)
+    val toolIcon = getToolIcon(toolName)
 
     Row(
         modifier = Modifier
@@ -1526,13 +2251,22 @@ private fun ToolStep(tool: ToolProgress, isActive: Boolean) {
         }
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                toolName,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-                color = if (isActive) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    toolIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    toolName,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
+                    color = if (isActive) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (statusText != null && (expanded || !hasDetail)) {
                 Text(
                     statusText,
@@ -1540,6 +2274,7 @@ private fun ToolStep(tool: ToolProgress, isActive: Boolean) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 20.dp, top = 2.dp),
                 )
             }
         }
@@ -1551,6 +2286,24 @@ private fun ToolStep(tool: ToolProgress, isActive: Boolean) {
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
+    }
+}
+
+private fun getToolIcon(toolName: String): androidx.compose.ui.graphics.vector.ImageVector {
+    val clean = toolName.lowercase()
+    return when {
+        clean.contains("web") || clean.contains("search") || clean.contains("browse") -> Icons.Rounded.Language
+        clean.contains("database") || clean.contains("db") || clean.contains("sql") -> Icons.Rounded.Storage
+        clean.contains("code") || clean.contains("exec") || clean.contains("run") -> Icons.Rounded.Code
+        clean.contains("file") || clean.contains("read") || clean.contains("write") -> Icons.Rounded.Description
+        clean.contains("reason") || clean.contains("think") -> Icons.Rounded.Psychology
+        clean.contains("plan") -> Icons.Rounded.Route
+        clean.contains("memory") -> Icons.Rounded.Bookmarks
+        clean.contains("skill") -> Icons.Rounded.Build
+        clean.contains("image") || clean.contains("photo") -> Icons.Rounded.Image
+        clean.contains("audio") || clean.contains("voice") -> Icons.Rounded.Mic
+        clean.contains("network") || clean.contains("api") -> Icons.Rounded.Wifi
+        else -> Icons.Rounded.AutoAwesome
     }
 }
 
@@ -1613,7 +2366,20 @@ private fun Composer(
     val mediaAttachments = attachments.filter { it.kind == "image" }
     val auxiliaryAttachments = attachments.filter { it.kind != "image" }
     val canSend = value.isNotBlank() || attachments.isNotEmpty()
-    val dividerColor = MaterialTheme.colorScheme.outlineVariant
+    val hasComposerContentAbove = replyTarget != null ||
+        isRecording ||
+        mediaAttachments.isNotEmpty() ||
+        auxiliaryAttachments.isNotEmpty()
+    val actionBackground = if (canSend) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
+    val actionTint = if (canSend) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth(),
@@ -1632,16 +2398,11 @@ private fun Composer(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .drawBehind {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(size.width, 0f),
-                        strokeWidth = 0.5.dp.toPx()
-                    )
-                }
-                .padding(10.dp),
+                .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.18f))
+                .clip(RoundedCornerShape(32.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.86f))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.26f), RoundedCornerShape(32.dp))
+                .padding(8.dp),
         ) {
             AnimatedVisibility(
                 visible = replyTarget != null,
@@ -1664,14 +2425,16 @@ private fun Composer(
                 auxiliaryAttachments = auxiliaryAttachments,
                 onRemoveAttachment = onRemoveAttachment,
             )
-            Spacer(Modifier.height(8.dp))
+            if (hasComposerContentAbove) {
+                Spacer(Modifier.height(8.dp))
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(start = 4.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.Bottom,
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.62f))
+                    .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box {
                     HermesCircleButton(
@@ -1679,8 +2442,8 @@ private fun Composer(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             pickerMenuOpen = true
                         },
-                        size = 44.dp,
-                        background = MaterialTheme.colorScheme.primaryContainer,
+                        size = 42.dp,
+                        background = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
                         contentColor = MaterialTheme.colorScheme.primary,
                         animated = true,
                         frosted = false,
@@ -1695,24 +2458,12 @@ private fun Composer(
                         onFiles = onFiles,
                     )
                 }
-                BasicTextField(
+                MessageInputField(
                     value = value,
                     onValueChange = onValueChange,
-                    textStyle = TextStyle(
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
-                        lineHeight = 22.sp,
-                    ),
+                    agentName = agentName,
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 44.dp, max = 132.dp)
-                        .padding(horizontal = 8.dp, vertical = 11.dp),
-                    decorationBox = { inner ->
-                        if (value.isEmpty()) {
-                            Text("Message $agentName", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        inner()
-                    },
                 )
                 AnimatedVisibility(visible = isStreaming) {
                     HermesCircleButton(
@@ -1741,10 +2492,11 @@ private fun Composer(
                 val actionDescription = if (canSend) "Send" else "Hold to record"
                 Box(
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(44.dp)
+                        .minimumInteractiveComponentSize()
                         .scale(sendScale * pulseScale)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
+                        .background(actionBackground)
                         .semantics {
                             role = Role.Button
                             contentDescription = actionDescription
@@ -1775,11 +2527,67 @@ private fun Composer(
                     Icon(
                         imageVector = if (canSend) Icons.AutoMirrored.Rounded.Send else if (isRecording) Icons.Rounded.StopCircle else Icons.Rounded.Mic,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
+                        tint = actionTint,
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun MessageInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    agentName: String,
+    modifier: Modifier = Modifier,
+    textFieldModifier: Modifier = Modifier,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val requestInputFocus = {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+        Unit
+    }
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 42.dp, max = 132.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = requestInputFocus,
+            )
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            textStyle = TextStyle(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
+            ),
+            modifier = textFieldModifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
+            decorationBox = { inner ->
+                if (value.isEmpty()) {
+                    Text(
+                        "Message $agentName",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                inner()
+            },
+        )
     }
 }
 
@@ -2080,6 +2888,57 @@ internal fun shouldPersistPickedPhotoAccess(uri: String): Boolean {
     if (!uri.startsWith("content://", ignoreCase = true)) return false
     val authority = uri.substringAfter("://").substringBefore("/")
     return authority.isNotBlank() && !authority.lowercase().endsWith(".fileprovider")
+}
+
+private fun highlightSearchMatches(text: AnnotatedString, query: String, baseColor: Color): AnnotatedString {
+    if (query.isBlank()) return text
+    val originalText = text.text
+    val lowerText = originalText.lowercase()
+    val lowerQuery = query.lowercase()
+    val builder = AnnotatedString.Builder()
+    var lastIndex = 0
+    var index = lowerText.indexOf(lowerQuery, startIndex = lastIndex)
+    while (index >= 0) {
+        if (index > lastIndex) {
+            builder.append(text.substring(lastIndex, index))
+        }
+        val matchEnd = index + query.length
+        builder.pushStyle(
+            SpanStyle(
+                background = baseColor.copy(alpha = 0.3f),
+                color = baseColor,
+                fontWeight = FontWeight.Bold,
+            )
+        )
+        builder.append(text.substring(index, matchEnd))
+        builder.pop()
+        lastIndex = matchEnd
+        index = lowerText.indexOf(lowerQuery, startIndex = lastIndex)
+    }
+    if (lastIndex < originalText.length) {
+        builder.append(text.substring(lastIndex))
+    }
+    return builder.toAnnotatedString()
+}
+
+private fun shareExport(context: Context, content: String, extension: String) {
+    val file = File(context.cacheDir, "hermes-export.$extension")
+    file.writeText(content)
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = when (extension) {
+            "md" -> "text/markdown"
+            "json" -> "application/json"
+            else -> "text/plain"
+        }
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Export conversation"))
 }
 
 private const val HERMES_MEDIA_DIRECTORY = "hermes-media"

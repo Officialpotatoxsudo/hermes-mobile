@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,12 +133,41 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(16.dp),
     ) {
-        Text(sessionDisplayTitle(session.title), style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                sessionDisplayTitle(session.title),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = if (session.unreadCount > 0) FontWeight.Bold else FontWeight.SemiBold,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            if (session.unreadCount > 0) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        session.unreadCount.coerceAtMost(99).toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(4.dp))
         Text(
-            sessionMetadataLine(session.messageCount, session.model, session.source),
+            session.lastMessagePreview?.takeIf { it.isNotBlank() }
+                ?: sessionMetadataLine(session.messageCount, session.model, session.source),
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (session.unreadCount > 0) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
         Spacer(Modifier.height(2.dp))
         Text(

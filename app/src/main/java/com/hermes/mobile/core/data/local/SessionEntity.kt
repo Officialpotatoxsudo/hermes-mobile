@@ -36,4 +36,10 @@ data class SessionEntity(
     val localLastActivityAt: Long = startedAt,
     @ColumnInfo(name = "account_scope")
     val accountScope: String = LEGACY_ACCOUNT_SCOPE,
+    @ColumnInfo(name = "last_message_preview")
+    val lastMessagePreview: String? = null,
+    @ColumnInfo(name = "unread_count")
+    val unreadCount: Int = 0,
+    @ColumnInfo(name = "last_read_at")
+    val lastReadAt: Long? = null,
 )

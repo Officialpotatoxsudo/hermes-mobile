@@ -107,6 +107,7 @@ private val mainTabs = listOf(
 @Composable
 fun HermesNavGraph(
     hasCredentials: Boolean,
+    appLockEnabled: Boolean = true,
     isUnlocked: Boolean,
     lastOpenedChatSessionId: String = "",
     onUnlocked: () -> Unit,
@@ -118,7 +119,7 @@ fun HermesNavGraph(
     val currentRoute = navBackStackEntry?.destination?.route
 
     LaunchedEffect(hasCredentials, isUnlocked, currentRoute) {
-        if (hasCredentials && !isUnlocked && currentRoute != null && currentRoute != Routes.Splash) {
+        if (shouldShowAppLock(hasCredentials, appLockEnabled, isUnlocked, currentRoute)) {
             navController.navigate(Routes.AppLock) {
                 popUpTo(Routes.Home) { inclusive = true }
                 launchSingleTop = true
@@ -139,15 +140,16 @@ fun HermesNavGraph(
                     modifier = Modifier
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.navigationBars)
-                        .padding(horizontal = 28.dp, vertical = 8.dp),
+                        .padding(horizontal = 26.dp, vertical = 9.dp),
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(34.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
-                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(34.dp))
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .shadow(18.dp, RoundedCornerShape(40.dp), ambientColor = MaterialTheme.colorScheme.background, spotColor = MaterialTheme.colorScheme.background)
+                            .clip(RoundedCornerShape(40.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), RoundedCornerShape(40.dp))
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -173,10 +175,10 @@ fun HermesNavGraph(
                                         scaleX = scale
                                         scaleY = scale
                                     }
-                                    .clip(RoundedCornerShape(28.dp))
+                                    .clip(RoundedCornerShape(32.dp))
                                     .background(
                                         if (selected) {
-                                            MaterialTheme.colorScheme.primaryContainer
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
                                         } else {
                                             androidx.compose.ui.graphics.Color.Transparent
                                         },
@@ -190,7 +192,7 @@ fun HermesNavGraph(
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         navController.navigateMainTab(tab.route)
                                     }
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 10.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center,
                             ) {
@@ -203,10 +205,17 @@ fun HermesNavGraph(
                                         if (isSelected) tab.filledIcon else tab.outlinedIcon,
                                         contentDescription = tab.label,
                                         tint = color,
-                                        modifier = Modifier.padding(bottom = 3.dp),
+                                        modifier = Modifier.size(24.dp).padding(bottom = 2.dp),
                                     )
                                 }
-                                Text(tab.label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 11.sp), color = color)
+                                Text(
+                                    tab.label,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    ),
+                                    color = color,
+                                )
                             }
                         }
                     }
@@ -237,11 +246,7 @@ fun HermesNavGraph(
                 composable(Routes.Splash) {
                     SplashScreen(
                         onFinished = {
-                            val next = when {
-                                !hasCredentials -> Routes.ConnectionSetup
-                                !isUnlocked -> Routes.AppLock
-                                else -> Routes.Home
-                            }
+                            val next = splashNextRoute(hasCredentials, appLockEnabled, isUnlocked)
                             navController.navigate(next) {
                                 popUpTo(Routes.Splash) { inclusive = true }
                             }
@@ -416,6 +421,31 @@ private fun NavHostController.navigateMainTab(route: String) {
         }
         launchSingleTop = true
         restoreState = true
+    }
+}
+
+internal fun shouldShowAppLock(
+    hasCredentials: Boolean,
+    appLockEnabled: Boolean,
+    isUnlocked: Boolean,
+    currentRoute: String?,
+): Boolean {
+    return hasCredentials &&
+        appLockEnabled &&
+        !isUnlocked &&
+        currentRoute != null &&
+        currentRoute != Routes.Splash
+}
+
+internal fun splashNextRoute(
+    hasCredentials: Boolean,
+    appLockEnabled: Boolean,
+    isUnlocked: Boolean,
+): String {
+    return when {
+        !hasCredentials -> Routes.ConnectionSetup
+        appLockEnabled && !isUnlocked -> Routes.AppLock
+        else -> Routes.Home
     }
 }
 

@@ -98,9 +98,25 @@ fun SettingsScreen(
             Spacer(Modifier.height(20.dp))
             SectionHeader("Security")
             SettingsSection {
-                SettingItem("App lock", "Choose lock timeout") {
+                ToggleRow(
+                    title = "App lock",
+                    subtitle = if (state.appLockEnabled) {
+                        "Require local authentication when returning"
+                    } else {
+                        "Skip local authentication on launch and resume"
+                    },
+                    checked = state.appLockEnabled,
+                    onCheckedChange = viewModel::setAppLockEnabled,
+                )
+                AnimatedVisibility(
+                    visible = state.appLockEnabled,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
                     Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         LockTimeout.entries.forEach { timeout ->

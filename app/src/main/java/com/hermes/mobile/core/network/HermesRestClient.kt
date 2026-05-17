@@ -10,7 +10,10 @@ import com.hermes.mobile.core.model.OpenAiModelsResponse
 import com.hermes.mobile.core.model.SessionsResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -121,6 +124,39 @@ class HermesRestClient @Inject constructor(
                 if (!response.isSuccessful) error("Messages failed: HTTP ${response.code}")
                 json.decodeFromString<MessagesResponse>(response.body.string())
             }
+        }
+    }
+
+    suspend fun pushMessage(sessionId: String, role: String, content: String, timestamp: Long): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val messageBody = json.encodeToString(
+                buildJsonObject {
+                    put("role", role)
+                    put("content", content)
+                    put("timestamp", timestamp)
+                }
+            )
+            val paths = listOf(
+                "api/sessions/${sessionId.encodedPathSegment()}/messages",
+                "v1/sessions/${sessionId.encodedPathSegment()}/messages",
+            )
+            var lastError: String? = null
+            paths.forEach { path ->
+                val request = Request.Builder()
+                    .url(tokenStore.serverUrl.endpoint(path))
+                    .applyBearer(tokenStore.apiKey)
+                    .post(messageBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) return@runCatching Unit
+                    if (response.code == 404) {
+                        lastError = "Endpoint not found: $path"
+                    } else {
+                        error("Push message failed: HTTP ${response.code}")
+                    }
+                }
+            }
+            error(lastError ?: "Push message failed")
         }
     }
 

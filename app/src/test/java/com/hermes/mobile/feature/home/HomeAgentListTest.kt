@@ -37,7 +37,27 @@ class HomeAgentListTest {
 
         assertEquals(listOf("agent-chat-hermes--2", "agent-chat-hermes--1"), rows.map { it.sessionId })
         assertEquals(listOf("Hermes Agent", "Hermes Agent"), rows.map { it.agentName })
+        assertEquals(listOf(true, true), rows.map { it.usesDefaultAvatar })
         assertEquals(listOf("none", "none"), rows.map { it.liveState })
+        assertEquals(listOf(0, 0), rows.map { it.unreadCount })
+    }
+
+    @Test
+    fun conversationInboxKeepsUnreadCount() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val rows = conversationInboxRows(
+            listOf(
+                session(
+                    id = "agent-chat-hermes--1",
+                    startedAt = 1_000,
+                    messageCount = 2,
+                    unreadCount = 2,
+                ),
+            ),
+            agents,
+        )
+
+        assertEquals(listOf(2), rows.map { it.unreadCount })
     }
 
     @Test
@@ -114,6 +134,7 @@ class HomeAgentListTest {
         startedAt: Long,
         messageCount: Int,
         localLastActivityAt: Long = startedAt,
+        unreadCount: Int = 0,
     ): SessionEntity {
         return SessionEntity(
             id = id,
@@ -124,6 +145,7 @@ class HomeAgentListTest {
             messageCount = messageCount,
             model = "hermes-agent",
             localLastActivityAt = localLastActivityAt,
+            unreadCount = unreadCount,
         )
     }
 }

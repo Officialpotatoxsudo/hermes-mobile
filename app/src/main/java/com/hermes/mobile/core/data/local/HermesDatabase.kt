@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SessionEntity::class, MessageEntity::class],
-    version = 4,
+    version = 6,
     exportSchema = true,
 )
 abstract class HermesDatabase : RoomDatabase() {
@@ -91,6 +91,19 @@ abstract class HermesDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE sessions ADD COLUMN local_last_activity_at INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("UPDATE sessions SET local_last_activity_at = started_at WHERE local_last_activity_at = 0")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_sessions_account_scope_local_last_activity_at ON sessions(account_scope, local_last_activity_at)")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN last_message_preview TEXT")
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN last_read_at INTEGER")
             }
         }
     }
