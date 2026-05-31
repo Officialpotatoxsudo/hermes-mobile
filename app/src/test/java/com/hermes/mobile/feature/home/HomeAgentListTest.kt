@@ -4,6 +4,7 @@ import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.core.settings.AgentProfile
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
 import com.hermes.mobile.core.util.newAgentChatSessionId
+import com.hermes.mobile.feature.chat.ChatStreamSnapshot
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -58,6 +59,50 @@ class HomeAgentListTest {
         )
 
         assertEquals(listOf(2), rows.map { it.unreadCount })
+    }
+
+    @Test
+    fun conversationLiveStatePrioritizesUnreadAndRecentActivity() {
+        assertEquals("unread", conversationLiveState(session(id = "agent-chat-hermes--1", startedAt = 1_000, messageCount = 2, unreadCount = 1), now = 10_000))
+        assertEquals("recent", conversationLiveState(session(id = "agent-chat-hermes--2", startedAt = 1_000, messageCount = 2, localLastActivityAt = 9_000), now = 10_000))
+        assertEquals("none", conversationLiveState(session(id = "agent-chat-hermes--3", startedAt = 1_000, messageCount = 2, localLastActivityAt = 1_000), now = 10_000_000))
+    }
+
+    @Test
+    fun conversationInboxDoesNotRenderStreamingPlaceholderPreview() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val rows = conversationInboxRows(
+            listOf(
+                session(
+                    id = "agent-chat-hermes--1",
+                    startedAt = 1_000,
+                    messageCount = 2,
+                    lastMessagePreview = "Streaming...",
+                ),
+            ),
+            agents,
+        )
+
+        assertEquals(listOf("2 messages"), rows.map { it.preview })
+    }
+
+    @Test
+    fun conversationInboxUsesActiveStreamStateWhenPresent() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val rows = conversationInboxRows(
+            listOf(session(id = "agent-chat-hermes--1", startedAt = 1_000, messageCount = 2, lastMessagePreview = "Hello")),
+            agents,
+            activeStreams = mapOf(
+                "agent-chat-hermes--1" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--1",
+                    assistantMessageId = 2L,
+                    isConnecting = true,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("Thinking"), rows.map { it.preview })
+        assertEquals(listOf("thinking"), rows.map { it.liveState })
     }
 
     @Test
@@ -135,6 +180,7 @@ class HomeAgentListTest {
         messageCount: Int,
         localLastActivityAt: Long = startedAt,
         unreadCount: Int = 0,
+        lastMessagePreview: String? = null,
     ): SessionEntity {
         return SessionEntity(
             id = id,
@@ -146,6 +192,7 @@ class HomeAgentListTest {
             model = "hermes-agent",
             localLastActivityAt = localLastActivityAt,
             unreadCount = unreadCount,
+            lastMessagePreview = lastMessagePreview,
         )
     }
 }

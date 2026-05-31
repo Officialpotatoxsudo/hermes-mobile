@@ -1,12 +1,14 @@
 package com.hermes.mobile.feature.chat
 
 import android.Manifest
+import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -36,7 +38,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -75,16 +76,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -123,8 +125,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -132,6 +134,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
@@ -142,7 +145,8 @@ import com.hermes.mobile.core.model.hermesCommandSuggestions
 import com.hermes.mobile.core.settings.AgentProfile
 import com.hermes.mobile.core.network.ConnectionState
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
-import com.hermes.mobile.core.util.visibleMessageText
+import com.hermes.mobile.core.util.ReceivedAttachment
+import com.hermes.mobile.core.util.ReceivedAttachmentKind
 import com.hermes.mobile.ui.components.frostedGlass
 import com.hermes.mobile.ui.components.HermesCircleButton
 import com.hermes.mobile.ui.components.MediaThumbnail
@@ -154,6 +158,7 @@ import coil3.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -165,6 +170,7 @@ import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -172,6 +178,7 @@ import androidx.compose.material.icons.rounded.KeyboardCommandKey
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Route
@@ -183,9 +190,40 @@ import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
+
+internal data class ChatBubblePalette(
+    val container: Color,
+    val content: Color,
+    val border: Color,
+)
+
+internal fun outgoingBubblePalette(colors: ColorScheme): ChatBubblePalette {
+    return ChatBubblePalette(
+        container = colors.primaryContainer,
+        content = colors.onPrimaryContainer,
+        border = colors.primary.copy(alpha = 0.24f),
+    )
+}
+
+internal fun assistantBubblePalette(colors: ColorScheme): ChatBubblePalette {
+    return ChatBubblePalette(
+        container = colors.surfaceContainer,
+        content = colors.onSurface,
+        border = colors.outlineVariant.copy(alpha = 0.42f),
+    )
+}
+
+internal fun chatBubbleMaxWidth(availableWidth: Dp, isOutgoing: Boolean): Dp {
+    val width = availableWidth * if (isOutgoing) 0.70f else 0.78f
+    val absoluteMax = if (isOutgoing) 440.dp else 560.dp
+    return width.coerceAtMost(absoluteMax).coerceAtLeast(96.dp)
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -199,6 +237,8 @@ fun ChatShellScreen(
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var isRecording by remember { mutableStateOf(false) }
+    var recordingStartedAt by remember { mutableStateOf(0L) }
+    var pendingDeleteMessage by remember { mutableStateOf<ChatUiMessage?>(null) }
     var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
@@ -251,11 +291,13 @@ fun ChatShellScreen(
                 recorder = result.recorder
                 recordingFile = result.file
                 isRecording = true
+                recordingStartedAt = System.currentTimeMillis()
             }
             .onFailure {
                 recorder = null
                 recordingFile = null
                 isRecording = false
+                recordingStartedAt = 0L
                 Toast.makeText(context, "Could not start voice recording", Toast.LENGTH_SHORT).show()
             }
     }
@@ -280,6 +322,7 @@ fun ChatShellScreen(
         recorder = null
         recordingFile = null
         isRecording = false
+        recordingStartedAt = 0L
         if (file != null) {
             viewModel.addVoiceRecording(
                 uri = Uri.fromFile(file).toString(),
@@ -294,15 +337,9 @@ fun ChatShellScreen(
         }
     }
 
-    LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content) {
-        if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.lastIndex)
-        }
-    }
-
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
-    var composerHeightPx by remember { mutableStateOf(0) }
+    var composerHeightPx by remember { mutableStateOf(with(density) { 88.dp.roundToPx() }) }
     val composerHeightDp = with(density) { composerHeightPx.toDp() }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
@@ -310,11 +347,24 @@ fun ChatShellScreen(
     val bottomPadding = (composerHeightDp + imeBottom + 20.dp).coerceAtLeast(112.dp)
     val loadingScrollState = rememberScrollState()
     val emptyScrollState = rememberScrollState()
-
-    LaunchedEffect(imeBottom, state.messages.size) {
-        if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.lastIndex)
+    val isNearBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val total = info.totalItemsCount
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total == 0 || lastVisible >= total - 3
         }
+    }
+    var previousMessageCount by remember { mutableStateOf(0) }
+
+    LaunchedEffect(imeBottom, state.messages.size, state.messages.lastOrNull()?.content, state.isSearchOpen) {
+        if (state.messages.isNotEmpty() && !state.isSearchOpen) {
+            val addedMessage = state.messages.size > previousMessageCount
+            if (addedMessage || isNearBottom) {
+                listState.animateScrollToItem(state.messages.lastIndex)
+            }
+        }
+        previousMessageCount = state.messages.size
     }
 
     LaunchedEffect(state.searchScrollTargetIndex) {
@@ -399,7 +449,7 @@ fun ChatShellScreen(
                                     onReply = { viewModel.replyTo(message.id) },
                                     onPin = { viewModel.togglePin(message.id) },
                                     onEdit = { viewModel.editMessage(message.id) },
-                                    onDelete = { viewModel.deleteMessage(message.id) },
+                                    onDelete = { pendingDeleteMessage = message },
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
                                         fadeOutSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
@@ -496,8 +546,7 @@ fun ChatShellScreen(
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .imePadding()
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-                    .onGloballyPositioned { composerHeightPx = it.size.height },
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
                 Composer(
                     value = state.draft,
@@ -512,12 +561,42 @@ fun ChatShellScreen(
                     onVoiceStart = ::beginRecording,
                     onVoiceEnd = ::finishRecording,
                     isRecording = isRecording,
+                    recordingStartedAtMillis = recordingStartedAt,
                     onCommand = viewModel::insertCommand,
                     onRemoveAttachment = viewModel::removeAttachment,
                     replyTarget = state.replyTarget,
                     onClearReply = viewModel::clearReply,
                     agentName = state.agentName,
                     selectedModel = state.selectedModel,
+                    modifier = Modifier.onGloballyPositioned { composerHeightPx = it.size.height },
+                )
+            }
+
+            pendingDeleteMessage?.let { message ->
+                val deletesExchange = message.role == "user"
+                AlertDialog(
+                    onDismissRequest = { pendingDeleteMessage = null },
+                    title = { Text(if (deletesExchange) "Delete exchange?" else "Delete message?") },
+                    text = {
+                        Text(
+                            if (deletesExchange) {
+                                "This removes your message and the assistant reply that followed it."
+                            } else {
+                                "This removes this message from the conversation."
+                            },
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteMessage(message.id)
+                                pendingDeleteMessage = null
+                            },
+                        ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDeleteMessage = null }) { Text("Cancel") }
+                    },
                 )
             }
         }
@@ -832,7 +911,7 @@ private fun StatusDot(color: Color, active: Boolean) {
 }
 
 internal fun activityLabel(state: ChatUiState): String {
-    val latestTool = state.tools.lastOrNull()
+    val latestTool = state.tools.lastOrNull().takeIf { state.isConnecting || state.isStreaming }
     return when {
         latestTool?.label?.isNotBlank() == true -> {
             val toolName = latestTool.tool?.takeIf { it.isNotBlank() } ?: latestTool.label
@@ -1006,7 +1085,7 @@ private fun EmptyErrorState(
 private fun ScrollToBottomFab(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(42.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface)
             .border(
@@ -1081,18 +1160,22 @@ private fun MessageBubble(
     }
     val haptic = LocalHapticFeedback.current
     val alignment = Alignment.CenterEnd
-    val bubbleColor = MaterialTheme.colorScheme.primary
-    val textColor = MaterialTheme.colorScheme.onPrimary
+    val palette = outgoingBubblePalette(MaterialTheme.colorScheme)
+    val bubbleColor = palette.container
+    val textColor = palette.content
     var menuOpen by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (message.isStreaming) 1.01f else 1f, label = "bubbleScale")
     val bubbleShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp)
     var dragOffset by remember { mutableStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, label = "replyDrag")
-    val visibleContent = visibleMessageText(message.content, message.imageUris.size)
+    val visibleContent = message.visibleContent()
 
     BoxWithConstraints(modifier.fillMaxWidth().animateContentSize(), contentAlignment = alignment) {
-        val maxBubbleWidth = maxWidth * 0.82f
+        val bubbleLaneWidth = (maxWidth - 56.dp).coerceAtLeast(160.dp)
+        val maxBubbleWidth = chatBubbleMaxWidth(bubbleLaneWidth, isOutgoing = true)
         val searchBorderColor = MaterialTheme.colorScheme.tertiary
+        val borderColor = if (isSearchMatch) searchBorderColor else palette.border
+        val borderWidth = if (isSearchMatch) 2.dp else 1.dp
         Box {
             Column(
                 modifier = Modifier
@@ -1101,13 +1184,7 @@ private fun MessageBubble(
                     .scale(scale)
                     .clip(bubbleShape)
                     .background(bubbleColor)
-                    .then(
-                        if (isSearchMatch) {
-                            Modifier.border(2.dp, searchBorderColor, bubbleShape)
-                        } else {
-                            Modifier
-                        }
-                    )
+                    .border(borderWidth, borderColor, bubbleShape)
                     .pointerInput(message.id) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -1130,7 +1207,7 @@ private fun MessageBubble(
                             menuOpen = true
                         },
                     )
-                    .padding(horizontal = 15.dp, vertical = 11.dp),
+                    .padding(horizontal = 13.dp, vertical = 9.dp),
             )
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1142,7 +1219,7 @@ private fun MessageBubble(
                     Text(
                         text = message.replyTo,
                         maxLines = 2,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = textColor.copy(alpha = 0.72f),
                         modifier = Modifier
                             .padding(bottom = 6.dp)
@@ -1169,8 +1246,18 @@ private fun MessageBubble(
                         }
                     }
                 }
+                ReceivedAttachments(
+                    attachments = message.receivedAttachments,
+                    toneColor = textColor,
+                    modifier = Modifier.padding(bottom = if (visibleContent.isNotBlank()) 8.dp else 0.dp),
+                )
                 if (visibleContent.isNotBlank()) {
-                    RichMessageText(visibleContent, textColor, searchQuery)
+                    RichMessageText(
+                        text = visibleContent,
+                        color = textColor,
+                        searchQuery = searchQuery,
+                        fillWidth = false,
+                    )
                 }
                 message.error?.let {
                     Text(
@@ -1186,7 +1273,7 @@ private fun MessageBubble(
                 Row(
                     modifier = Modifier
                         .align(Alignment.End)
-                        .padding(top = 6.dp),
+                        .padding(top = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (outgoing && message.error == null) {
@@ -1198,19 +1285,11 @@ private fun MessageBubble(
                         )
                         Spacer(Modifier.width(3.dp))
                     }
-	                    Text(
-	                        message.time,
-	                        style = MaterialTheme.typography.bodyMedium,
-	                        color = textColor.copy(alpha = 0.66f),
-	                    )
-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(30.dp)) {
-                        Icon(
-                            Icons.Rounded.MoreVert,
-                            contentDescription = "Message actions",
-                            tint = textColor.copy(alpha = 0.66f),
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                    Text(
+                        message.time,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = textColor.copy(alpha = 0.72f),
+                    )
                 }
             }
             MessageActionsMenu(
@@ -1247,12 +1326,11 @@ private fun AssistantMessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, label = "assistantReplyDrag")
-    val cardShape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
-    val visibleContent = visibleMessageText(message.content, message.imageUris.size)
+    val visibleContent = message.visibleContent()
     val searchBorderColor = MaterialTheme.colorScheme.tertiary
 
     Box(modifier.fillMaxWidth().animateContentSize()) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(animatedDrag.roundToInt(), 0) }
@@ -1280,125 +1358,112 @@ private fun AssistantMessageRow(
                 )
                 .then(
                     if (isSearchMatch) {
-                        Modifier.border(2.dp, searchBorderColor, cardShape)
+                        Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f))
+                            .border(1.dp, searchBorderColor.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
                     } else {
                         Modifier
-                    }
+                    },
                 )
-                .padding(horizontal = 2.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.Top,
+                .padding(start = 4.dp, end = 22.dp, top = 10.dp, bottom = 12.dp),
         ) {
-            AssistantAvatar(agentName = agentName, active = message.isStreaming, avatarUri = agentAvatarUri)
-            Spacer(Modifier.width(10.dp))
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(top = 4.dp, end = 4.dp)
-                    .shadow(elevation = 2.dp, shape = cardShape)
-                    .background(MaterialTheme.colorScheme.surface, cardShape)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            if (message.replyTo != null) {
+                Text(
+                    text = message.replyTo,
+                    maxLines = 2,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = textColor.copy(alpha = 0.64f),
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(textColor.copy(alpha = 0.08f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = agentName,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = textColor.copy(alpha = 0.88f),
+                if (isPinned) {
+                    Icon(
+                        Icons.Rounded.PushPin,
+                        contentDescription = "Pinned message",
+                        modifier = Modifier.size(14.dp),
+                        tint = textColor.copy(alpha = 0.56f),
                     )
-                    if (message.isStreaming) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "live",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                .padding(horizontal = 7.dp, vertical = 2.dp),
-                        )
-                    }
-                    if (isPinned) {
-                        Spacer(Modifier.width(6.dp))
-                        Icon(
-                            Icons.Rounded.PushPin,
-                            contentDescription = "Pinned message",
-                            modifier = Modifier.size(14.dp),
-                            tint = textColor.copy(alpha = 0.6f),
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    message.responseTime?.let { time ->
-                        Text(
-                            text = time,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = textColor.copy(alpha = 0.5f),
-                        )
-                    }
                 }
-                if (message.replyTo != null) {
+                if (message.isStreaming && visibleContent.isNotBlank()) {
                     Text(
-                        text = message.replyTo,
-                        maxLines = 2,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = textColor.copy(alpha = 0.64f),
+                        "live",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
-                            .padding(top = 8.dp, bottom = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(textColor.copy(alpha = 0.08f))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                if (visibleContent.isNotBlank()) {
-                    RichMessageText(visibleContent, textColor, searchQuery)
-                }
-                if (message.isStreaming && message.content.isBlank()) {
-                    Row(
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer)
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        InlineLottie(
-                            resId = com.hermes.mobile.R.raw.typing_dots,
-                            modifier = Modifier.size(32.dp, 14.dp),
-                        )
-                    }
-                }
-                message.error?.let {
+                message.responseTime?.let { time ->
                     Text(
-                        text = "$it  Retry",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier
-                            .align(Alignment.End)
-                            .clickable(onClick = onRetry)
-                            .padding(top = 8.dp),
+                        text = time,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.5f),
                     )
                 }
+            }
+            if (isPinned || message.responseTime != null || (message.isStreaming && visibleContent.isNotBlank())) {
+                Spacer(Modifier.height(8.dp))
+            }
+            ReceivedAttachments(
+                attachments = message.receivedAttachments,
+                toneColor = textColor,
+                modifier = Modifier.padding(bottom = if (visibleContent.isNotBlank()) 8.dp else 0.dp),
+            )
+            if (visibleContent.isNotBlank()) {
+                RichMessageText(visibleContent, textColor, searchQuery)
+            }
+            if (message.isStreaming && message.content.isBlank()) {
                 Row(
                     modifier = Modifier
-                        .align(Alignment.End)
-                        .padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        message.time,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = textColor.copy(alpha = 0.56f),
+                    InlineLottie(
+                        resId = com.hermes.mobile.R.raw.typing_dots,
+                        modifier = Modifier.size(32.dp, 14.dp),
                     )
-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(30.dp)) {
-                        Icon(
-                            Icons.Rounded.MoreVert,
-                            contentDescription = "Message actions",
-                            tint = textColor.copy(alpha = 0.58f),
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                }
+            }
+            message.error?.let {
+                Text(
+                    text = "$it  Retry",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .clickable(onClick = onRetry)
+                        .padding(top = 8.dp),
+                )
+            }
+            Row(
+                modifier = Modifier.padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    message.time,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = textColor.copy(alpha = 0.54f),
+                )
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        contentDescription = "Message actions",
+                        tint = textColor.copy(alpha = 0.58f),
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
@@ -1412,6 +1477,145 @@ private fun AssistantMessageRow(
             onEdit = null,
             onDelete = onDelete,
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun ReceivedAttachments(
+    attachments: List<ReceivedAttachment>,
+    toneColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    if (attachments.isEmpty()) return
+    val context = LocalContext.current
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        attachments.forEach { attachment ->
+            ReceivedAttachmentCard(
+                attachment = attachment,
+                toneColor = toneColor,
+                onOpen = { openReceivedAttachment(context, attachment) },
+                onSave = { saveReceivedAttachment(context, attachment) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ReceivedAttachmentCard(
+    attachment: ReceivedAttachment,
+    toneColor: Color,
+    onOpen: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val label = attachment.label
+    val icon = when (attachment.kind) {
+        ReceivedAttachmentKind.Image -> Icons.Rounded.Image
+        ReceivedAttachmentKind.Video -> Icons.Rounded.PlayArrow
+        ReceivedAttachmentKind.File -> Icons.Rounded.Description
+    }
+    val cardModifier = Modifier
+        .fillMaxWidth()
+        .clip(shape)
+        .background(toneColor.copy(alpha = 0.07f))
+        .border(1.dp, toneColor.copy(alpha = 0.12f), shape)
+        .combinedClickable(onClick = onOpen)
+
+    if (attachment.kind == ReceivedAttachmentKind.Image) {
+        Box(
+            modifier = cardModifier
+                .height(184.dp),
+        ) {
+            AsyncImage(
+                model = attachment.url,
+                contentDescription = label,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AttachmentIconButton(icon = Icons.AutoMirrored.Rounded.OpenInNew, description = "Open image", onClick = onOpen)
+                AttachmentIconButton(icon = Icons.Rounded.Download, description = "Save image", onClick = onSave)
+            }
+            Text(
+                text = label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.48f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+        return
+    }
+
+    Row(
+        modifier = cardModifier.padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(toneColor.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = toneColor.copy(alpha = 0.86f), modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge,
+                color = toneColor,
+            )
+            Text(
+                when (attachment.kind) {
+                    ReceivedAttachmentKind.Video -> "Video"
+                    ReceivedAttachmentKind.File -> "File"
+                    ReceivedAttachmentKind.Image -> "Image"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = toneColor.copy(alpha = 0.62f),
+            )
+        }
+        AttachmentIconButton(icon = Icons.AutoMirrored.Rounded.OpenInNew, description = "Open attachment", onClick = onOpen)
+        Spacer(Modifier.width(2.dp))
+        AttachmentIconButton(icon = Icons.Rounded.Download, description = "Save attachment", onClick = onSave)
+    }
+}
+
+@Composable
+private fun AttachmentIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(40.dp)
+            .minimumInteractiveComponentSize()
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+    ) {
+        Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -1525,7 +1729,7 @@ private fun MessageActionsMenu(
         }
         HorizontalDivider()
         DropdownMenuItem(
-            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+            text = { Text(if (message.role == "user") "Delete exchange" else "Delete", color = MaterialTheme.colorScheme.error) },
             leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error) },
             onClick = {
                 onDelete()
@@ -1552,16 +1756,21 @@ private fun QueuedPromptRow(prompt: PendingPrompt, onCancel: () -> Unit) {
             Text("Queued", style = MaterialTheme.typography.labelLarge)
             Text(prompt.readableContent(), maxLines = 1, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        IconButton(onClick = onCancel, modifier = Modifier.size(34.dp)) {
+        IconButton(onClick = onCancel, modifier = Modifier.size(40.dp)) {
             Icon(Icons.Rounded.Close, contentDescription = "Cancel queued message")
         }
     }
 }
 
 @Composable
-private fun RichMessageText(text: String, color: Color, searchQuery: String = "") {
+private fun RichMessageText(
+    text: String,
+    color: Color,
+    searchQuery: String = "",
+    fillWidth: Boolean = true,
+) {
     val parsed = remember(text, color) { parseMarkdown(text, color) }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier) {
         parsed.forEach { block ->
             when (block) {
                 is MarkdownBlock.Text -> {
@@ -1570,9 +1779,14 @@ private fun RichMessageText(text: String, color: Color, searchQuery: String = ""
                     } else {
                         block.content
                     }
-                    Text(
+                    LinkAwareText(
                         text = highlighted,
-                        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp),
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 17.sp,
+                            lineHeight = 25.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = color,
+                        ),
                     )
                 }
                 is MarkdownBlock.CodeBlock -> CodeBlockView(block.language, block.content, color)
@@ -1591,6 +1805,33 @@ private fun RichMessageText(text: String, color: Color, searchQuery: String = ""
             }
         }
     }
+}
+
+@Composable
+private fun LinkAwareText(
+    text: AnnotatedString,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text = text,
+        style = style,
+        onTextLayout = { layoutResult = it },
+        modifier = modifier.pointerInput(text) {
+            detectTapGestures { position ->
+                val offset = layoutResult?.getOffsetForPosition(position) ?: return@detectTapGestures
+                val url = text.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                    .firstOrNull()
+                    ?.item
+                    ?: return@detectTapGestures
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                }
+            }
+        },
+    )
 }
 
 sealed class MarkdownBlock {
@@ -1944,10 +2185,9 @@ private fun BlockquoteView(content: AnnotatedString, color: Color) {
                 .clip(RoundedCornerShape(2.dp)),
         )
         Spacer(Modifier.width(12.dp))
-        Text(
+        LinkAwareText(
             text = content,
-            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp),
-            color = color.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 23.sp, color = color.copy(alpha = 0.85f)),
         )
     }
 }
@@ -1966,13 +2206,13 @@ private fun TaskListView(items: List<MarkdownBlock.TaskItem>, color: Color) {
                     color = color,
                     modifier = Modifier.padding(end = 8.dp),
                 )
-                Text(
+                LinkAwareText(
                     text = item.content,
                     style = MaterialTheme.typography.bodyLarge.copy(
                         lineHeight = 23.sp,
                         textDecoration = if (item.completed) TextDecoration.LineThrough else null,
+                        color = if (item.completed) color.copy(alpha = 0.6f) else color,
                     ),
-                    color = if (item.completed) color.copy(alpha = 0.6f) else color,
                 )
             }
         }
@@ -2129,50 +2369,52 @@ private fun ThinkingIndicator(
     agentName: String,
     agentAvatarUri: String?,
 ) {
-    Row(
+    val palette = assistantBubblePalette(MaterialTheme.colorScheme)
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 2.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Top,
     ) {
-        AssistantAvatar(agentName = agentName, active = true, avatarUri = agentAvatarUri)
-        Spacer(Modifier.width(10.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
-                    shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 8.dp),
-                    containerAlpha = 0.68f,
-                    borderAlpha = 0.16f,
-                )
-                .padding(14.dp)
-                .animateContentSize(spring(dampingRatio = 0.8f, stiffness = 300f)),
+        val bubbleLaneWidth = (maxWidth - 52.dp).coerceAtLeast(160.dp)
+        val maxBubbleWidth = chatBubbleMaxWidth(bubbleLaneWidth, isOutgoing = false)
+        Row(
+            verticalAlignment = Alignment.Top,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ThinkingDots()
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    label.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            if (tools.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
-                    thickness = 0.5.dp,
-                )
-                Spacer(Modifier.height(8.dp))
-                tools.forEachIndexed { index, tool ->
-                    ToolStep(
-                        tool = tool,
-                        isActive = index == tools.lastIndex,
+            AssistantAvatar(agentName = agentName, active = true, avatarUri = agentAvatarUri)
+            Spacer(Modifier.width(10.dp))
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 116.dp, max = maxBubbleWidth)
+                    .background(palette.container, RoundedCornerShape(20.dp, 20.dp, 20.dp, 8.dp))
+                    .border(1.dp, palette.border, RoundedCornerShape(20.dp, 20.dp, 20.dp, 8.dp))
+                    .padding(14.dp)
+                    .animateContentSize(spring(dampingRatio = 0.8f, stiffness = 300f)),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ThinkingDots()
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        label.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
-                    if (index < tools.lastIndex) {
-                        Spacer(Modifier.height(2.dp))
+                }
+                if (tools.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
+                        thickness = 0.5.dp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    tools.forEachIndexed { index, tool ->
+                        ToolStep(
+                            tool = tool,
+                            isActive = index == tools.lastIndex,
+                        )
+                        if (index < tools.lastIndex) {
+                            Spacer(Modifier.height(2.dp))
+                        }
                     }
                 }
             }
@@ -2354,12 +2596,14 @@ private fun Composer(
     onVoiceStart: () -> Unit,
     onVoiceEnd: () -> Unit,
     isRecording: Boolean,
+    recordingStartedAtMillis: Long,
     onCommand: (String) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     replyTarget: ChatUiMessage?,
     onClearReply: () -> Unit,
     agentName: String,
     selectedModel: ChatModelOption,
+    modifier: Modifier = Modifier,
 ) {
     var pickerMenuOpen by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
@@ -2381,7 +2625,7 @@ private fun Composer(
         MaterialTheme.colorScheme.primary
     }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth(),
     ) {
         AnimatedVisibility(
@@ -2396,13 +2640,13 @@ private fun Composer(
             )
         }
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.18f))
-                .clip(RoundedCornerShape(32.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.86f))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.26f), RoundedCornerShape(32.dp))
-                .padding(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(8.dp, RoundedCornerShape(30.dp), ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f), RoundedCornerShape(32.dp))
+                    .padding(8.dp),
         ) {
             AnimatedVisibility(
                 visible = replyTarget != null,
@@ -2418,7 +2662,7 @@ private fun Composer(
                 enter = fadeIn(),
                 exit = fadeOut(),
             ) {
-                RecordingStrip()
+                RecordingStrip(startedAtMillis = recordingStartedAtMillis)
             }
             AttachmentTray(
                 mediaAttachments = mediaAttachments,
@@ -2432,7 +2676,7 @@ private fun Composer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(28.dp))
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.62f))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
                     .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2442,7 +2686,7 @@ private fun Composer(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             pickerMenuOpen = true
                         },
-                        size = 42.dp,
+                        size = 48.dp,
                         background = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
                         contentColor = MaterialTheme.colorScheme.primary,
                         animated = true,
@@ -2471,7 +2715,7 @@ private fun Composer(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onStop()
                         },
-                        size = 44.dp,
+                        size = 48.dp,
                         background = MaterialTheme.colorScheme.error.copy(alpha = 0.9f),
                         contentColor = MaterialTheme.colorScheme.onError,
                         animated = true,
@@ -2492,7 +2736,7 @@ private fun Composer(
                 val actionDescription = if (canSend) "Send" else "Hold to record"
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(48.dp)
                         .minimumInteractiveComponentSize()
                         .scale(sendScale * pulseScale)
                         .clip(CircleShape)
@@ -2554,7 +2798,8 @@ internal fun MessageInputField(
 
     Box(
         modifier = modifier
-            .heightIn(min = 42.dp, max = 132.dp)
+            .heightIn(min = 48.dp, max = 140.dp)
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(24.dp))
             .clickable(
                 interactionSource = interactionSource,
@@ -2569,8 +2814,9 @@ internal fun MessageInputField(
             onValueChange = onValueChange,
             textStyle = TextStyle(
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 16.sp,
-                lineHeight = 22.sp,
+                fontSize = 17.sp,
+                lineHeight = 24.sp,
+                fontWeight = FontWeight.SemiBold,
             ),
             modifier = textFieldModifier
                 .fillMaxWidth()
@@ -2580,7 +2826,7 @@ internal fun MessageInputField(
                     Text(
                         "Message $agentName",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2631,8 +2877,9 @@ private fun AttachmentTray(
 }
 
 @Composable
-private fun RecordingStrip() {
-    val pulse by rememberInfiniteTransition(label = "recordPulse").animateFloat(
+private fun RecordingStrip(startedAtMillis: Long) {
+    val transition = rememberInfiniteTransition(label = "recordingMotion")
+    val pulse by transition.animateFloat(
         initialValue = 0.9f,
         targetValue = 1.12f,
         animationSpec = infiniteRepeatable(
@@ -2641,31 +2888,85 @@ private fun RecordingStrip() {
         ),
         label = "recordPulseScale",
     )
+    val wave by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(760),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "recordWave",
+    )
+    var elapsedSeconds by remember(startedAtMillis) { mutableStateOf(0L) }
+    LaunchedEffect(startedAtMillis) {
+        while (startedAtMillis > 0L) {
+            elapsedSeconds = ((System.currentTimeMillis() - startedAtMillis) / 1000L).coerceAtLeast(0L)
+            delay(500L)
+        }
+    }
+    val elapsed = "%d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60)
+    val tone = MaterialTheme.colorScheme.error
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 8.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(24.dp))
+            .background(tone.copy(alpha = 0.13f))
+            .border(1.dp, tone.copy(alpha = 0.24f), RoundedCornerShape(24.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(30.dp)
+                .size(36.dp)
                 .scale(pulse)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary),
+                .background(tone),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Rounded.Mic, contentDescription = "Recording voice", modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onPrimary)
+            Icon(Icons.Rounded.Mic, contentDescription = "Recording voice", modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onError)
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text("Recording voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text("Release to send", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Recording voice",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = tone,
+            )
+            Text(
+                "Release to attach",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        InlineLottie(resId = com.hermes.mobile.R.raw.typing_dots, modifier = Modifier.size(44.dp, 22.dp))
+        RecordingWaveform(level = wave, color = tone, modifier = Modifier.size(58.dp, 28.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(
+            elapsed,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = tone,
+        )
+    }
+}
+
+@Composable
+private fun RecordingWaveform(level: Float, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val bars = 7
+        val gap = size.width / (bars * 2f)
+        val stroke = gap.coerceAtLeast(3f)
+        repeat(bars) { index ->
+            val phase = ((index % 3) * 0.18f + level).coerceIn(0f, 1f)
+            val heightFactor = 0.28f + (abs(sin((phase + index * 0.21f) * Math.PI).toFloat()) * 0.68f)
+            val barHeight = size.height * heightFactor
+            val x = gap + index * gap * 2f
+            drawLine(
+                color = color.copy(alpha = 0.88f),
+                start = Offset(x, (size.height - barHeight) / 2f),
+                end = Offset(x, (size.height + barHeight) / 2f),
+                strokeWidth = stroke,
+            )
+        }
     }
 }
 
@@ -2786,7 +3087,7 @@ private fun AttachmentChip(attachment: ChatAttachment, onRemove: () -> Unit) {
         )
         Spacer(Modifier.width(4.dp))
         Text(attachment.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, modifier = Modifier.weight(1f))
-        IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) {
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Rounded.Close, contentDescription = "Remove attachment", modifier = Modifier.size(16.dp))
         }
     }
@@ -2941,4 +3242,57 @@ private fun shareExport(context: Context, content: String, extension: String) {
     context.startActivity(Intent.createChooser(shareIntent, "Export conversation"))
 }
 
+private fun openReceivedAttachment(context: Context, attachment: ReceivedAttachment) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(attachment.url)).apply {
+        attachment.mimeType?.let { setDataAndType(Uri.parse(attachment.url), it) }
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(intent)
+    }.onFailure {
+        Toast.makeText(context, "No app can open this attachment", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun saveReceivedAttachment(context: Context, attachment: ReceivedAttachment) {
+    val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+    if (manager == null) {
+        Toast.makeText(context, "Downloads are unavailable", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val request = DownloadManager.Request(Uri.parse(attachment.url)).apply {
+        setTitle(attachment.label)
+        setDescription("Saved from Hermes")
+        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, attachment.safeDownloadFileName())
+        attachment.mimeType?.let(::setMimeType)
+        setAllowedOverMetered(true)
+        setAllowedOverRoaming(true)
+    }
+    runCatching {
+        manager.enqueue(request)
+    }.onSuccess {
+        Toast.makeText(context, "Saving ${attachment.label}", Toast.LENGTH_SHORT).show()
+    }.onFailure {
+        Toast.makeText(context, "Could not save attachment", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun ReceivedAttachment.safeDownloadFileName(): String {
+    val cleanLabel = label.lineSequence()
+        .map { line -> line.filter { it.isLetterOrDigit() || it in safeDownloadFileNameChars }.trim() }
+        .firstOrNull { it.isNotBlank() }
+        ?.take(96)
+        ?: "hermes-attachment"
+    val labelHasExtension = cleanLabel.substringAfterLast('.', "").let { it.length in 2..8 && it.all(Char::isLetterOrDigit) }
+    if (labelHasExtension) return cleanLabel
+    val extension = url.substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('.', "")
+        .takeIf { it.length in 2..8 && it.all(Char::isLetterOrDigit) }
+        ?: return cleanLabel
+    return "$cleanLabel.$extension"
+}
+
 private const val HERMES_MEDIA_DIRECTORY = "hermes-media"
+private val safeDownloadFileNameChars = setOf('.', '-', '_', ' ')

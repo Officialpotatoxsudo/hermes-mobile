@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SessionEntity::class, MessageEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class HermesDatabase : RoomDatabase() {
@@ -104,6 +104,42 @@ abstract class HermesDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE sessions ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE sessions ADD COLUMN last_read_at INTEGER")
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("PRAGMA foreign_keys=OFF")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS messages_new (
+                        id INTEGER NOT NULL,
+                        session_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        image_uris_json TEXT NOT NULL DEFAULT '[]',
+                        account_scope TEXT NOT NULL DEFAULT 'legacy',
+                        remote_backed INTEGER NOT NULL DEFAULT 1,
+                        PRIMARY KEY(account_scope, session_id, id),
+                        FOREIGN KEY(account_scope, session_id) REFERENCES sessions(account_scope, id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO messages_new (
+                        id, session_id, role, content, timestamp, image_uris_json, account_scope, remote_backed
+                    )
+                    SELECT id, session_id, role, content, timestamp, image_uris_json, account_scope, remote_backed
+                    FROM messages
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE messages")
+                db.execSQL("ALTER TABLE messages_new RENAME TO messages")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_account_scope_session_id ON messages(account_scope, session_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_account_scope_timestamp ON messages(account_scope, timestamp)")
+                db.execSQL("PRAGMA foreign_keys=ON")
             }
         }
     }

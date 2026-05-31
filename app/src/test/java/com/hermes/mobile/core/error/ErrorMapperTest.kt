@@ -63,6 +63,14 @@ class ErrorMapperTest {
     }
 
     @Test
+    fun userMessageMapsTunnelClosed() {
+        assertEquals(
+            "Tunnel closed. Keep the Hermes server tunnel running, then retry.",
+            ErrorMapper.userMessage(IllegalStateException("tunnel closed")),
+        )
+    }
+
+    @Test
     fun userMessageCapsLongRawThrowableMessage() {
         val message = ErrorMapper.userMessage(IllegalStateException("x".repeat(220)))
 

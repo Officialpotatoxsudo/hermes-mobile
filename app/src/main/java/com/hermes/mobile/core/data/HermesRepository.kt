@@ -125,6 +125,10 @@ class HermesRepository @Inject constructor(
         return sseClient.streamChat(request, sessionId)
     }
 
+    suspend fun completeChat(request: ChatCompletionRequest, sessionId: String? = null): List<SseEvent> {
+        return sseClient.completeChat(request, sessionId)
+    }
+
     suspend fun getText(path: String): Result<String> = restClient.getText(path)
 
     suspend fun putText(path: String, body: String): Result<String> = restClient.putText(path, body)

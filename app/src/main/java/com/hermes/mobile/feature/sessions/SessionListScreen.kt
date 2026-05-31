@@ -61,11 +61,11 @@ fun SessionListScreen(
             .statusBarsPadding()
             .padding(16.dp),
     ) {
-        HermesHeader(title = "Sessions", trailingAction = "Chat", onTrailingAction = onBack)
+        HermesHeader(title = "Sessions", trailingAction = "Library", onTrailingAction = onBack)
         HermesSearchField(
             query = state.query,
             onQueryChange = viewModel::onQueryChanged,
-            placeholder = "Search cache",
+            placeholder = "Search chats",
             showLeadingIcon = false,
         )
         state.error?.let {

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +51,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -97,6 +99,7 @@ fun AgentControlScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    var pendingDangerousAction by remember { mutableStateOf<HermesFeatureAction?>(null) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -173,9 +176,36 @@ fun AgentControlScreen(
                     error = state.error,
                     isLoading = state.isLoading,
                     onBodyChanged = viewModel::onBodyChanged,
-                    onRun = viewModel::runSelectedAction,
+                    onRun = {
+                        if (state.selectedAction.kind == HermesFeatureActionKind.Delete) {
+                            pendingDangerousAction = state.selectedAction
+                        } else {
+                            viewModel.runSelectedAction()
+                        }
+                    },
                 )
             }
+        }
+
+        pendingDangerousAction?.let { action ->
+            AlertDialog(
+                onDismissRequest = { pendingDangerousAction = null },
+                title = { Text("Delete on server?") },
+                text = {
+                    Text("${action.title} can remove data from the connected Hermes server. This cannot be undone from the app.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingDangerousAction = null
+                            viewModel.runSelectedAction()
+                        },
+                    ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDangerousAction = null }) { Text("Cancel") }
+                },
+            )
         }
     }
 }

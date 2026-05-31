@@ -26,7 +26,6 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -52,6 +51,8 @@ class ChatRetryPayloadTest {
         val repository = mockk<HermesRepository>()
         val context = mockk<Context>(relaxed = true)
         val requests = mutableListOf<ChatCompletionRequest>()
+        val firstRequest = CompletableDeferred<Unit>()
+        val secondRequest = CompletableDeferred<Unit>()
         val image = "data:image/jpeg;base64,AQID"
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
@@ -59,6 +60,10 @@ class ChatRetryPayloadTest {
         coEvery { repository.saveLocalMessage(any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            when (requests.size) {
+                1 -> firstRequest.complete(Unit)
+                2 -> secondRequest.complete(Unit)
+            }
             flowOf(SseEvent.Done)
         }
 
@@ -69,16 +74,12 @@ class ChatRetryPayloadTest {
         assertEquals(1, viewModel.uiState.value.attachments.size)
         viewModel.sendCurrentDraft()
         assertEquals(2, viewModel.uiState.value.messages.size)
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        firstRequest.await()
         advanceUntilIdle()
         assertEquals(null, viewModel.uiState.value.error)
 
         viewModel.retryLast()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        secondRequest.await()
         advanceUntilIdle()
 
         assertEquals(2, requests.size)
@@ -95,11 +96,15 @@ class ChatRetryPayloadTest {
         val repository = mockk<HermesRepository>()
         val context = mockk<Context>(relaxed = true)
         val image = "data:image/jpeg;base64,AQID"
+        val requestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
         coEvery { repository.saveLocalMessage(any()) } just runs
-        every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } returns flowOf(SseEvent.Done)
+        every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
+            requestStarted.complete(Unit)
+            flowOf(SseEvent.Done)
+        }
 
         val viewModel = ChatViewModel(SavedStateHandle(), repository, appPreferences(), context)
         advanceUntilIdle()
@@ -107,6 +112,7 @@ class ChatRetryPayloadTest {
         viewModel.addAttachment(uri = image, label = "Photo", kind = "image")
         viewModel.addAttachment(uri = " $image ", label = "Photo", kind = "image")
         viewModel.sendCurrentDraft()
+        requestStarted.await()
         advanceUntilIdle()
 
         assertEquals(
@@ -136,9 +142,6 @@ class ChatRetryPayloadTest {
         viewModel.addAttachment(uri = image, label = "Photo", kind = "image")
         assertTrue(viewModel.uiState.value.attachments.isEmpty())
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
         advanceUntilIdle()
 
         assertEquals(0, requests.size)
@@ -174,6 +177,7 @@ class ChatRetryPayloadTest {
         val context = mockk<Context>(relaxed = true)
         val image = "data:image/jpeg;base64,AQID"
         val requests = mutableListOf<ChatCompletionRequest>()
+        val requestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
@@ -181,6 +185,7 @@ class ChatRetryPayloadTest {
         coEvery { repository.deleteLocalMessages(any(), any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            requestStarted.complete(Unit)
             flowOf(SseEvent.Done)
         }
 
@@ -189,9 +194,7 @@ class ChatRetryPayloadTest {
 
         viewModel.addAttachment(uri = image, label = "Photo", kind = "image")
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        requestStarted.await()
         advanceUntilIdle()
         val userMessage = viewModel.uiState.value.messages.first { it.role == "user" }
 
@@ -214,6 +217,7 @@ class ChatRetryPayloadTest {
         val repository = mockk<HermesRepository>()
         val context = mockk<Context>(relaxed = true)
         val requests = mutableListOf<ChatCompletionRequest>()
+        val requestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
@@ -221,6 +225,7 @@ class ChatRetryPayloadTest {
         coEvery { repository.deleteLocalMessages(any(), any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            requestStarted.complete(Unit)
             flowOf(SseEvent.Done)
         }
 
@@ -229,9 +234,7 @@ class ChatRetryPayloadTest {
 
         viewModel.onDraftChanged("delete me")
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        requestStarted.await()
         advanceUntilIdle()
         val userMessage = viewModel.uiState.value.messages.first { it.role == "user" }
         assertEquals(2, viewModel.uiState.value.messages.size)
@@ -251,12 +254,14 @@ class ChatRetryPayloadTest {
         val context = mockk<Context>(relaxed = true)
         val firstStream = MutableSharedFlow<SseEvent>()
         val requests = mutableListOf<ChatCompletionRequest>()
+        val firstRequestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
         coEvery { repository.saveLocalMessage(any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            if (requests.size == 1) firstRequestStarted.complete(Unit)
             if (requests.size == 1) firstStream else flowOf(SseEvent.Done)
         }
 
@@ -265,9 +270,7 @@ class ChatRetryPayloadTest {
 
         viewModel.onDraftChanged("first")
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        firstRequestStarted.await()
         advanceUntilIdle()
         assertEquals(1, requests.size)
 
@@ -276,9 +279,6 @@ class ChatRetryPayloadTest {
         assertEquals(1, viewModel.uiState.value.queuedPrompts.size)
 
         viewModel.stop()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
         advanceUntilIdle()
 
         assertEquals(1, requests.size)
@@ -294,12 +294,18 @@ class ChatRetryPayloadTest {
         val context = mockk<Context>(relaxed = true)
         val firstStream = MutableSharedFlow<SseEvent>()
         val requests = mutableListOf<ChatCompletionRequest>()
+        val firstRequestStarted = CompletableDeferred<Unit>()
+        val secondRequestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
         coEvery { repository.saveLocalMessage(any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            when (requests.size) {
+                1 -> firstRequestStarted.complete(Unit)
+                2 -> secondRequestStarted.complete(Unit)
+            }
             if (requests.size == 1) firstStream else flowOf(SseEvent.Done)
         }
 
@@ -308,9 +314,7 @@ class ChatRetryPayloadTest {
 
         viewModel.onDraftChanged("first")
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        firstRequestStarted.await()
         advanceUntilIdle()
         viewModel.onDraftChanged("second")
         viewModel.sendCurrentDraft()
@@ -319,9 +323,7 @@ class ChatRetryPayloadTest {
         assertEquals(1, viewModel.uiState.value.queuedPrompts.size)
 
         firstStream.emit(SseEvent.Done)
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        secondRequestStarted.await()
         advanceUntilIdle()
 
         assertEquals(2, requests.size)
@@ -338,12 +340,14 @@ class ChatRetryPayloadTest {
         val context = mockk<Context>(relaxed = true)
         val failNow = CompletableDeferred<Unit>()
         val requests = mutableListOf<ChatCompletionRequest>()
+        val requestStarted = CompletableDeferred<Unit>()
 
         coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
         coEvery { repository.saveLocalSession(any()) } just runs
         coEvery { repository.saveLocalMessage(any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
+            requestStarted.complete(Unit)
             flow {
                 failNow.await()
                 throw IOException("offline")
@@ -355,9 +359,7 @@ class ChatRetryPayloadTest {
 
         viewModel.onDraftChanged("first")
         viewModel.sendCurrentDraft()
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
+        requestStarted.await()
         advanceUntilIdle()
         viewModel.onDraftChanged("second")
         viewModel.sendCurrentDraft()
@@ -365,9 +367,6 @@ class ChatRetryPayloadTest {
         assertEquals(1, viewModel.uiState.value.queuedPrompts.size)
 
         failNow.complete(Unit)
-        advanceUntilIdle()
-        withContext(Dispatchers.IO) {}
-        Thread.sleep(100)
         advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value.queuedPrompts.isEmpty())

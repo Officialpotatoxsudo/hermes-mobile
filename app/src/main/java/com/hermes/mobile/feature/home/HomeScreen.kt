@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,7 +36,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import coil3.compose.AsyncImage
@@ -44,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,7 +72,9 @@ import com.hermes.mobile.core.settings.AppPreferences
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
 import com.hermes.mobile.core.util.formatMessageCount
 import com.hermes.mobile.core.util.formatTimestamp
+import com.hermes.mobile.feature.chat.ChatStreamSnapshot
 import com.hermes.mobile.feature.sessions.SessionListViewModel
+import com.hermes.mobile.ui.components.HermesSearchField
 import com.hermes.mobile.ui.components.frostedGlass
 import kotlinx.coroutines.delay
 
@@ -81,8 +84,8 @@ fun HomeScreen(
     viewModel: SessionListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val rows = remember(state.sessions, state.agents) {
-        conversationInboxRows(state.sessions, state.agents)
+    val rows = remember(state.sessions, state.agents, state.activeStreams) {
+        conversationInboxRows(state.sessions, state.agents, state.activeStreams)
     }
     val defaultAgent = state.agents.firstOrNull() ?: AppPreferences.defaultAgents.first()
 
@@ -94,6 +97,8 @@ fun HomeScreen(
                 .background(MaterialTheme.colorScheme.background),
         ) {
             HomeTopBar(
+                query = state.query,
+                onQueryChange = viewModel::onQueryChanged,
                 onStartChat = { onAgentClick(defaultAgent, null) },
             )
             state.error?.let {
@@ -154,6 +159,8 @@ fun HomeScreen(
 
 @Composable
 private fun HomeTopBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
     onStartChat: () -> Unit,
 ) {
     Column(
@@ -181,6 +188,8 @@ private fun HomeTopBar(
             }
             Row(
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(50.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f))
                     .clickable(onClick = onStartChat)
@@ -202,29 +211,12 @@ private fun HomeTopBar(
             }
         }
         Spacer(Modifier.height(18.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .clip(RoundedCornerShape(50.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(50.dp))
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Rounded.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "Search conversations",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+        HermesSearchField(
+            query = query,
+            onQueryChange = onQueryChange,
+            placeholder = "Search conversations",
+            modifier = Modifier.padding(horizontal = 0.dp, vertical = 0.dp),
+        )
     }
 }
 
@@ -307,6 +299,7 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
             modifier = Modifier.padding(start = 12.dp),
             horizontalAlignment = Alignment.End,
         ) {
+            val statusLabel = conversationLiveStateLabel(row.liveState)
             Text(
                 row.timestamp,
                 style = MaterialTheme.typography.labelMedium,
@@ -327,6 +320,21 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
+            } else if (statusLabel != null) {
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        statusLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }
@@ -342,6 +350,9 @@ private fun EmptyConversationState(onStartChat: () -> Unit) {
     ) {
         Row(
             modifier = Modifier
+                .fillMaxWidth()
+                .minimumInteractiveComponentSize()
+                .heightIn(min = 56.dp)
                 .clip(RoundedCornerShape(30.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f), RoundedCornerShape(30.dp))
@@ -478,9 +489,11 @@ internal fun latestSessionsByAgent(sessions: List<SessionEntity>): Map<String, S
 internal fun conversationInboxRows(
     sessions: List<SessionEntity>,
     agents: List<AgentProfile>,
+    activeStreams: Map<String, ChatStreamSnapshot> = emptyMap(),
 ): List<ConversationRowModel> {
     val defaultAgent = agents.firstOrNull() ?: AppPreferences.defaultAgents.first()
     val agentsById = agents.associateBy { it.id }
+    val now = System.currentTimeMillis()
     return sessions
         .sortedWith(
             compareByDescending<SessionEntity> { it.localLastActivityAt }
@@ -489,22 +502,59 @@ internal fun conversationInboxRows(
         .map { session ->
             val agentId = agentIdFromChatSessionId(session.id) ?: defaultAgent.id
             val agent = agentsById[agentId] ?: defaultAgent
+            val stream = activeStreams[session.id]
             ConversationRowModel(
                 sessionId = session.id,
                 agentId = agent.id,
                 title = session.title?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.takeIf { it.isNotBlank() }
                     ?: agent.name,
                 agentName = agent.name,
-                preview = session.lastMessagePreview?.takeIf { it.isNotBlank() }
+                preview = stream.conversationPreview()
+                    ?: session.lastMessagePreview
+                    ?.takeIf { it.isNotBlank() && it != STREAMING_PREVIEW }
                     ?: formatMessageCount(session.messageCount),
                 timestamp = formatTimestamp(session.localLastActivityAt),
                 agentInitial = agent.initial,
                 usesDefaultAvatar = agent.id == AppPreferences.defaultAgents.first().id,
                 avatarUri = agent.avatarUri?.takeIf { it.isNotBlank() },
-                liveState = "none",
+                liveState = conversationLiveState(session, now, stream),
                 unreadCount = session.unreadCount,
             )
         }
+}
+
+internal fun conversationLiveState(
+    session: SessionEntity,
+    now: Long = System.currentTimeMillis(),
+    stream: ChatStreamSnapshot? = null,
+): String {
+    if (stream?.error != null) return "error"
+    if (stream?.isConnecting == true) return "thinking"
+    if (stream?.isStreaming == true) return "streaming"
+    if (session.unreadCount > 0) return "unread"
+    val age = now - session.localLastActivityAt
+    return if (age in 0..RECENT_ACTIVITY_WINDOW_MS) "recent" else "none"
+}
+
+internal fun conversationLiveStateLabel(liveState: String): String? {
+    return when (liveState) {
+        "thinking" -> "Thinking"
+        "streaming" -> "Live"
+        "error" -> "Issue"
+        "recent" -> "Active"
+        else -> null
+    }
+}
+
+private fun ChatStreamSnapshot?.conversationPreview(): String? {
+    if (this == null) return null
+    return when {
+        error != null -> error
+        content.isNotBlank() -> content.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() }?.take(200)
+        isConnecting -> "Thinking"
+        isStreaming -> "Responding"
+        else -> null
+    }
 }
 
 internal fun agentRowSubtitle(agent: AgentProfile, session: SessionEntity?): String {
@@ -536,6 +586,8 @@ private fun String.cleanAgentSubtitleLine(): String {
 
 private const val MAX_AGENT_SUBTITLE_LENGTH = 48
 private const val MIN_AGENT_SUBTITLE_WORD_BOUNDARY = 24
+private const val RECENT_ACTIVITY_WINDOW_MS = 2 * 60 * 1000L
+private const val STREAMING_PREVIEW = "Streaming..."
 
 @Composable
 private fun AgentAvatar(
@@ -646,6 +698,8 @@ private fun AgentFormPanel(
                 "Cancel",
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .clickable(onClick = onCancel)
                     .padding(horizontal = 14.dp, vertical = 9.dp),
@@ -655,6 +709,8 @@ private fun AgentFormPanel(
                 color = if (canSave) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (canSave) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
                     .clickable(enabled = canSave, onClick = onSave)
@@ -696,6 +752,8 @@ private fun DeleteAgentPanel(
                 "Cancel",
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .clickable(onClick = onCancel)
                     .padding(horizontal = 14.dp, vertical = 9.dp),
@@ -705,6 +763,8 @@ private fun DeleteAgentPanel(
                 color = MaterialTheme.colorScheme.onError,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(MaterialTheme.colorScheme.error)
                     .clickable(onClick = onDelete)

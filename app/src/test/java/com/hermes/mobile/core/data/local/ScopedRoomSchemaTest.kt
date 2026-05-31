@@ -22,12 +22,22 @@ class ScopedRoomSchemaTest {
     }
 
     @Test
+    fun duplicateRemoteMessageIdsAreIsolatedAcrossSessions() {
+        val first = message("scope-a").copy(sessionId = "remote-session-1")
+        val second = message("scope-a").copy(sessionId = "remote-session-2")
+
+        assertEquals(first.id, second.id)
+        assertEquals(first.accountScope, second.accountScope)
+        assertTrue(first.sessionId != second.sessionId)
+    }
+
+    @Test
     fun entitiesUseScopedPrimaryKeysAndForeignKeys() {
         val sessionSource = File("src/main/java/com/hermes/mobile/core/data/local/SessionEntity.kt").readText()
         val messageSource = File("src/main/java/com/hermes/mobile/core/data/local/MessageEntity.kt").readText()
 
         assertTrue(sessionSource.contains("primaryKeys = [\"account_scope\", \"id\"]"))
-        assertTrue(messageSource.contains("primaryKeys = [\"account_scope\", \"id\"]"))
+        assertTrue(messageSource.contains("primaryKeys = [\"account_scope\", \"session_id\", \"id\"]"))
         assertTrue(messageSource.contains("parentColumns = [\"account_scope\", \"id\"]"))
         assertTrue(messageSource.contains("childColumns = [\"account_scope\", \"session_id\"]"))
         assertTrue(messageSource.contains("onDelete = ForeignKey.CASCADE"))

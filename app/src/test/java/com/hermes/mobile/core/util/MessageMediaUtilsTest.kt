@@ -151,4 +151,44 @@ class MessageMediaUtilsTest {
         assertEquals("Caption", visibleMessageText("Caption", imageCount = 1))
         assertEquals("Photo", readableMessageText("Photo attached.", imageCount = 1))
     }
+
+    @Test
+    fun parsesReceivedMediaAttachmentsFromAssistantContent() {
+        val content = """
+            Here are the files.
+
+            ![Launch chart](https://cdn.example.com/launch-chart.png)
+            [Planning report.pdf](https://cdn.example.com/reports/planning-report.pdf)
+            https://cdn.example.com/demo/final-cut.mp4?download=1
+        """.trimIndent()
+
+        val attachments = receivedAttachmentsFromMessage(content)
+
+        assertEquals(
+            listOf(
+                ReceivedAttachmentKind.Image,
+                ReceivedAttachmentKind.File,
+                ReceivedAttachmentKind.Video,
+            ),
+            attachments.map { it.kind },
+        )
+        assertEquals(
+            listOf("Launch chart", "Planning report.pdf", "final-cut.mp4"),
+            attachments.map { it.label },
+        )
+        assertEquals("Here are the files.", visibleReceivedAttachmentText(content))
+    }
+
+    @Test
+    fun receivedAttachmentParserIgnoresUnsafeAndPlainLinks() {
+        val content = """
+            [Docs](https://example.com/docs)
+            file:///sdcard/private.mov
+            content://media/picker/0/photo
+            ftp://example.com/file.zip
+        """.trimIndent()
+
+        assertEquals(emptyList<ReceivedAttachment>(), receivedAttachmentsFromMessage(content))
+        assertEquals(content, visibleReceivedAttachmentText(content))
+    }
 }

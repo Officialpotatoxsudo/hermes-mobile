@@ -1,6 +1,8 @@
 package com.hermes.mobile.feature.chat
 
 import com.hermes.mobile.core.network.ConnectionState
+import com.hermes.mobile.core.util.ReceivedAttachment
+import com.hermes.mobile.core.util.ReceivedAttachmentKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -262,5 +264,32 @@ class ChatPromptFormatterTest {
 
         assertEquals("What is in this photo?", message.readableContent())
         assertFalse(message.readableContent().contains("content://"))
+    }
+
+    @Test
+    fun receivedMediaOnlyMessagesHaveReadableFallbackText() {
+        val imageMessage = ChatUiMessage(
+            id = "assistant-1",
+            role = "assistant",
+            content = "![Preview](https://cdn.example.com/preview.png)",
+            time = "10:00",
+            receivedAttachments = listOf(
+                ReceivedAttachment(
+                    url = "https://cdn.example.com/preview.png",
+                    label = "Preview",
+                    kind = ReceivedAttachmentKind.Image,
+                ),
+            ),
+        )
+        val mixedMessage = imageMessage.copy(
+            receivedAttachments = imageMessage.receivedAttachments + ReceivedAttachment(
+                url = "https://cdn.example.com/demo.mp4",
+                label = "demo.mp4",
+                kind = ReceivedAttachmentKind.Video,
+            ),
+        )
+
+        assertEquals("Image", imageMessage.readableContent())
+        assertEquals("2 attachments", mixedMessage.previewContent())
     }
 }

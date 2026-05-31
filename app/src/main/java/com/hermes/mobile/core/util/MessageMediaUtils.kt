@@ -4,7 +4,21 @@ import android.content.Context
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.URLDecoder
 import java.util.Locale
+
+data class ReceivedAttachment(
+    val url: String,
+    val label: String,
+    val kind: ReceivedAttachmentKind,
+    val mimeType: String? = null,
+)
+
+enum class ReceivedAttachmentKind {
+    Image,
+    Video,
+    File,
+}
 
 fun messageImageUrisFromJson(value: String): List<String> {
     val cleanValue = value.trim()
@@ -55,6 +69,71 @@ fun readableMessageText(content: String, imageCount: Int): String {
     return visibleMessageText(content, imageCount).ifBlank { formatPhotoSummary(imageCount) }
 }
 
+fun receivedAttachmentsFromMessage(content: String): List<ReceivedAttachment> {
+    if (content.isBlank()) return emptyList()
+
+    val attachments = mutableListOf<ReceivedAttachment>()
+    val consumedRanges = mutableListOf<IntRange>()
+
+    markdownImagePattern.findAll(content).forEach { match ->
+        val label = match.groupValues.getOrNull(1).orEmpty()
+        val url = match.groupValues.getOrNull(2).orEmpty()
+        buildReceivedAttachment(url, label, forcedKind = ReceivedAttachmentKind.Image)?.let {
+            attachments += it
+            consumedRanges += match.range
+        }
+    }
+
+    markdownLinkPattern.findAll(content).forEach { match ->
+        if (consumedRanges.any { match.range.first in it }) return@forEach
+        val label = match.groupValues.getOrNull(1).orEmpty()
+        val url = match.groupValues.getOrNull(2).orEmpty()
+        buildReceivedAttachment(url, label)?.let {
+            attachments += it
+            consumedRanges += match.range
+        }
+    }
+
+    bareHttpUrlPattern.findAll(content).forEach { match ->
+        if (consumedRanges.any { match.range.first in it }) return@forEach
+        buildReceivedAttachment(match.value, labelHint = "")?.let { attachments += it }
+    }
+
+    return attachments.distinctBy { it.url }
+}
+
+fun visibleReceivedAttachmentText(content: String): String {
+    val attachments = receivedAttachmentsFromMessage(content)
+    if (attachments.isEmpty()) return content.trim()
+
+    val attachmentUrls = attachments.map { it.url }.toSet()
+    var cleanContent = content
+    listOf(markdownImagePattern, markdownLinkPattern).forEach { pattern ->
+        cleanContent = pattern.replace(cleanContent) { match ->
+            val url = match.groupValues.getOrNull(2).orEmpty().cleanReceivedAttachmentUrl()
+            if (url in attachmentUrls) "" else match.value
+        }
+    }
+    cleanContent = bareHttpUrlPattern.replace(cleanContent) { match ->
+        val url = match.value.cleanReceivedAttachmentUrl()
+        if (url in attachmentUrls) "" else match.value
+    }
+
+    return cleanContent.lineSequence()
+        .map { line ->
+            val trimmed = line.trim()
+            val bulletless = trimmed.trimStart('-', '*', '•').trim()
+            when {
+                trimmed.cleanReceivedAttachmentUrl() in attachmentUrls -> ""
+                bulletless.cleanReceivedAttachmentUrl() in attachmentUrls -> ""
+                else -> line
+            }
+        }
+        .joinToString("\n")
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim()
+}
+
 fun isAllowedMessageImageUri(value: String): Boolean {
     val cleanValue = value.trim()
     if (cleanValue.isBlank()) return false
@@ -88,6 +167,99 @@ private fun cleanImageUriCandidate(value: String): String {
         .firstOrNull { it.isNotBlank() }
         .orEmpty()
         .trimEnd(',', ';', '.', ')', ']', '}', '>')
+}
+
+private fun buildReceivedAttachment(
+    rawUrl: String,
+    labelHint: String,
+    forcedKind: ReceivedAttachmentKind? = null,
+): ReceivedAttachment? {
+    val url = rawUrl.cleanReceivedAttachmentUrl()
+    if (!url.startsWith("https://", ignoreCase = true) && !url.startsWith("http://", ignoreCase = true)) return null
+    val kind = forcedKind ?: inferReceivedAttachmentKind(url, labelHint) ?: return null
+    val label = labelHint.cleanReceivedAttachmentLabel()
+        ?: url.fileNameFromUrl()
+        ?: kind.defaultReceivedAttachmentLabel()
+    return ReceivedAttachment(
+        url = url,
+        label = label,
+        kind = kind,
+        mimeType = mimeTypeForReceivedAttachment(kind, url),
+    )
+}
+
+private fun inferReceivedAttachmentKind(url: String, labelHint: String): ReceivedAttachmentKind? {
+    val extension = (url.extensionFromUrl() ?: labelHint.extensionFromLabel()).orEmpty()
+    return when (extension.lowercase(Locale.US)) {
+        in imageAttachmentExtensions -> ReceivedAttachmentKind.Image
+        in videoAttachmentExtensions -> ReceivedAttachmentKind.Video
+        in fileAttachmentExtensions -> ReceivedAttachmentKind.File
+        else -> null
+    }
+}
+
+private fun String.cleanReceivedAttachmentUrl(): String {
+    return trim()
+        .trimEnd(',', ';', '.', ')', ']', '}', '>', '"', '\'')
+}
+
+private fun String.cleanReceivedAttachmentLabel(): String? {
+    val cleanLabel = lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
+        ?.trim('[', ']', '(', ')')
+        ?.trim()
+        ?: return null
+    if (cleanLabel.startsWith("http://", ignoreCase = true) || cleanLabel.startsWith("https://", ignoreCase = true)) return null
+    return cleanLabel.take(MAX_RECEIVED_ATTACHMENT_LABEL_LENGTH)
+}
+
+private fun String.fileNameFromUrl(): String? {
+    val path = substringBefore('?').substringBefore('#').substringAfterLast('/')
+    if (path.isBlank() || path == this) return null
+    return runCatching { URLDecoder.decode(path, Charsets.UTF_8.name()) }
+        .getOrDefault(path)
+        .cleanReceivedAttachmentLabel()
+}
+
+private fun String.extensionFromUrl(): String? {
+    return substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('/', "")
+        .substringAfterLast('.', "")
+        .takeIf { it.length in 2..8 && it.all(Char::isLetterOrDigit) }
+}
+
+private fun String.extensionFromLabel(): String? {
+    return substringAfterLast('.', "")
+        .takeIf { it.length in 2..8 && it.all(Char::isLetterOrDigit) }
+}
+
+private fun ReceivedAttachmentKind.defaultReceivedAttachmentLabel(): String {
+    return when (this) {
+        ReceivedAttachmentKind.Image -> "Image"
+        ReceivedAttachmentKind.Video -> "Video"
+        ReceivedAttachmentKind.File -> "File"
+    }
+}
+
+private fun mimeTypeForReceivedAttachment(kind: ReceivedAttachmentKind, url: String): String? {
+    val extension = url.extensionFromUrl()?.lowercase(Locale.US)
+    return when {
+        extension == "jpg" || extension == "jpeg" -> "image/jpeg"
+        extension == "png" -> "image/png"
+        extension == "gif" -> "image/gif"
+        extension == "webp" -> "image/webp"
+        extension == "mp4" || extension == "m4v" -> "video/mp4"
+        extension == "mov" -> "video/quicktime"
+        extension == "webm" -> "video/webm"
+        extension == "pdf" -> "application/pdf"
+        extension == "json" -> "application/json"
+        extension == "txt" || extension == "md" -> "text/plain"
+        kind == ReceivedAttachmentKind.Image -> "image/*"
+        kind == ReceivedAttachmentKind.Video -> "video/*"
+        else -> null
+    }
 }
 
 private fun isGeneratedPhotoPrompt(value: String): Boolean {
@@ -208,3 +380,27 @@ private val allowedDataImagePrefixes = listOf(
 )
 private val legacyImageUriPattern = Regex("""(?i)(content://\S+|data:image/(?:png|jpeg|webp);base64,\S+)""")
 private val wrappedUriTailPattern = Regex("""[A-Za-z0-9._~%+-]+""")
+private const val MAX_RECEIVED_ATTACHMENT_LABEL_LENGTH = 80
+private val markdownImagePattern = Regex("""!\[([^\]]*)]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
+private val markdownLinkPattern = Regex("""(?<!!)\[([^\]]+)]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
+private val bareHttpUrlPattern = Regex("""https?://[^\s)>\]]+""", RegexOption.IGNORE_CASE)
+private val imageAttachmentExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "avif")
+private val videoAttachmentExtensions = setOf("mp4", "m4v", "mov", "webm", "mkv")
+private val fileAttachmentExtensions = setOf(
+    "pdf",
+    "txt",
+    "md",
+    "csv",
+    "json",
+    "zip",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "mp3",
+    "m4a",
+    "wav",
+    "ogg",
+)

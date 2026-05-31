@@ -28,8 +28,11 @@ import com.hermes.mobile.core.util.legacyImageUrisFromText
 import com.hermes.mobile.core.util.messageImageUrisFromJson
 import com.hermes.mobile.core.util.newAgentChatSessionId
 import com.hermes.mobile.core.util.readableMessageText
+import com.hermes.mobile.core.util.ReceivedAttachment
+import com.hermes.mobile.core.util.receivedAttachmentsFromMessage
 import com.hermes.mobile.core.util.resolveOpenedChatSessionId
 import com.hermes.mobile.core.util.visibleMessageText
+import com.hermes.mobile.core.util.visibleReceivedAttachmentText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +68,7 @@ data class ChatUiMessage(
     val replyTo: String? = null,
     val responseTime: String? = null,
     val imageUris: List<String> = emptyList(),
+    val receivedAttachments: List<ReceivedAttachment> = emptyList(),
 )
 
 data class ChatAttachment(
@@ -148,8 +152,7 @@ class ChatViewModel @Inject constructor(
     private var streamJob: Job? = null
     private var visibleSessionId: String? = null
     private var isCleared = false
-    private val resumeSessionId: String? = savedStateHandle.cleanString("sessionId")
-        ?: savedStateHandle.cleanString("activeSessionId")
+    private val resumeSessionId: String? = initialSessionId
 
     init {
         observeAgentProfileNames()
@@ -761,6 +764,9 @@ class ChatViewModel @Inject constructor(
                         )
                     }
                 },
+                onSessionResolved = { resolvedSessionId ->
+                    handleResolvedStreamSession(sessionId, resolvedSessionId)
+                },
                 onFinished = {
                     _uiState.update { state ->
                         state.copy(
@@ -798,7 +804,7 @@ class ChatViewModel @Inject constructor(
             model = selectedModel.model,
             lastSyncedAt = nowMillis,
             localLastActivityAt = nowMillis,
-            lastMessagePreview = messages.lastOrNull()?.previewContent()?.take(200),
+            lastMessagePreview = messages.lastStablePreview()?.take(200),
             unreadCount = 0,
             lastReadAt = nowMillis,
         )
@@ -816,25 +822,38 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private fun ChatUiState.withActiveStreamSnapshotIfAny(sessionId: String): ChatUiState {
+        val snapshot = streamCoordinator.streams.value[sessionId]
+        return if (snapshot == null) this else withStreamSnapshot(snapshot)
+    }
+
     private fun ChatUiState.withStreamSnapshot(snapshot: ChatStreamSnapshot): ChatUiState {
+        val userMessage = snapshot.userMessage?.toChatUiMessage()
         val assistantId = "assistant-${snapshot.assistantMessageId}"
         val assistantTime = currentTimeLabel(snapshot.assistantMessageId)
-        val messageIndex = messages.indexOfFirst { it.id.persistedMessageId() == snapshot.assistantMessageId }
+        val messagesWithUser = if (userMessage != null && messages.none { it.id.persistedMessageId() == snapshot.userMessage.id }) {
+            messages + userMessage
+        } else {
+            messages
+        }
+        val messageIndex = messagesWithUser.indexOfFirst { it.id.persistedMessageId() == snapshot.assistantMessageId }
         val updatedMessages = if (messageIndex >= 0) {
-            messages.mapIndexed { index, message ->
+            messagesWithUser.mapIndexed { index, message ->
                 if (index == messageIndex) {
+                    val nextContent = snapshot.content.ifBlank { message.content }
                     message.copy(
-                        content = snapshot.content.ifBlank { message.content },
+                        content = nextContent,
                         isStreaming = snapshot.isStreaming || snapshot.isConnecting,
                         error = snapshot.error,
                         usage = snapshot.usage ?: message.usage,
+                        receivedAttachments = receivedAttachmentsFromMessage(nextContent),
                     )
                 } else {
                     message
                 }
             }
         } else {
-            messages + ChatUiMessage(
+            messagesWithUser + ChatUiMessage(
                 id = assistantId,
                 role = "assistant",
                 content = snapshot.content,
@@ -842,6 +861,7 @@ class ChatViewModel @Inject constructor(
                 isStreaming = snapshot.isStreaming || snapshot.isConnecting,
                 error = snapshot.error,
                 usage = snapshot.usage,
+                receivedAttachments = receivedAttachmentsFromMessage(snapshot.content),
             )
         }
         return copy(
@@ -912,16 +932,21 @@ class ChatViewModel @Inject constructor(
         return "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
     }
 
-    private fun onOpened(remoteSessionId: String?, localSessionId: String) {
-        val activeSessionId = resolveOpenedChatSessionId(localSessionId, remoteSessionId)
-        rememberOpenedSession(activeSessionId)
+    private fun handleResolvedStreamSession(localSessionId: String, resolvedSessionId: String) {
+        val activeSessionId = resolveOpenedChatSessionId(localSessionId, resolvedSessionId)
+        val currentSessionId = _uiState.value.sessionId
+        if (currentSessionId != localSessionId && currentSessionId != activeSessionId) return
         _uiState.update { state ->
             state.copy(
                 sessionId = activeSessionId,
                 isConnecting = false,
                 isStreaming = true,
                 connectionState = ConnectionState.Connected,
-            )
+            ).withActiveStreamSnapshotIfAny(activeSessionId)
+        }
+        rememberOpenedSession(activeSessionId)
+        if (!isCleared) {
+            markSessionVisible(activeSessionId)
         }
         if (activeSessionId != localSessionId) {
             savedStateHandle["activeSessionId"] = activeSessionId
@@ -1071,17 +1096,18 @@ class ChatViewModel @Inject constructor(
                     isConnecting = false,
                     error = null,
                     connectionState = ConnectionState.Connected,
-                )
+                ).withActiveStreamSnapshotIfAny(sessionId)
             }
             val cachedEntities = cachedMessagesForSession(sessionId)
             messageIds.seed(cachedEntities.maxOfOrNull { it.id } ?: 0L)
             _uiState.update {
+                val cachedMessages = cachedEntities.map(MessageEntity::toChatUiMessage)
                 it.copy(
                     sessionId = sessionId,
-                    messages = cachedEntities.map(MessageEntity::toChatUiMessage),
+                    messages = cachedMessages.ifEmpty { it.messages },
                     isConnecting = false,
                     connectionState = ConnectionState.Connected,
-                )
+                ).withActiveStreamSnapshotIfAny(sessionId)
             }
 
             var syncError: String? = null
@@ -1091,7 +1117,8 @@ class ChatViewModel @Inject constructor(
                         syncError = ErrorMapper.userMessage(error, "Session sync failed")
                     }
                 }
-            val entities = cachedMessagesForSession(sessionId).ifEmpty { cachedEntities }
+            val syncedEntities = cachedMessagesForSession(sessionId)
+            val entities = restoreMessagesMissingAfterSync(sessionId, cachedEntities, syncedEntities)
             messageIds.seed(entities.maxOfOrNull { it.id } ?: 0L)
             val messages = entities.map(MessageEntity::toChatUiMessage)
             _uiState.update {
@@ -1102,14 +1129,29 @@ class ChatViewModel @Inject constructor(
                     connectionState = syncError?.let(ConnectionState::Error) ?: ConnectionState.Connected,
                     error = syncError,
                 )
-                val snapshot = streamCoordinator.streams.value[sessionId]
-                if (snapshot == null) next else next.withStreamSnapshot(snapshot)
+                next.withActiveStreamSnapshotIfAny(sessionId)
             }
         }
     }
 
     private suspend fun cachedMessagesForSession(sessionId: String): List<MessageEntity> {
         return runCatching { repository.cachedMessages(sessionId) }.getOrDefault(emptyList())
+    }
+
+    private suspend fun restoreMessagesMissingAfterSync(
+        sessionId: String,
+        beforeSync: List<MessageEntity>,
+        afterSync: List<MessageEntity>,
+    ): List<MessageEntity> {
+        if (beforeSync.isEmpty()) return afterSync
+        val afterKeys = afterSync.mapTo(mutableSetOf()) { it.sessionId to it.id }
+        val missing = beforeSync.filter { (it.sessionId to it.id) !in afterKeys }
+        if (missing.isNotEmpty()) {
+            repository.saveLocalMessages(missing.map { it.copy(sessionId = sessionId) })
+        }
+        return (afterSync + missing)
+            .distinctBy { it.sessionId to it.id }
+            .sortedWith(compareBy<MessageEntity> { it.timestamp }.thenBy { it.id })
     }
 
     private fun observeAgentProfileNames() {
@@ -1183,7 +1225,7 @@ class ChatViewModel @Inject constructor(
         val state = _uiState.value
         val now = System.currentTimeMillis()
         val existing = runCatching { repository.cachedSession(sessionId) }.getOrNull()
-        val lastMessagePreview = state.messages.lastOrNull()?.previewContent()?.take(200)
+        val lastMessagePreview = state.messages.lastStablePreview()?.take(200)
         repository.saveLocalSession(
             SessionEntity(
                 id = sessionId,
@@ -1265,7 +1307,7 @@ class ChatViewModel @Inject constructor(
                 imageUrisJson = message.imageUris.toMessageImageJson(),
             )
         }
-        val lastMessagePreview = state.messages.lastOrNull()?.previewContent()?.take(200)
+        val lastMessagePreview = state.messages.lastStablePreview()?.take(200)
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             repository.saveLocalSession(
@@ -1305,15 +1347,20 @@ class ChatViewModel @Inject constructor(
 }
 
 internal fun ChatUiMessage.readableContent(): String {
-    return readableMessageText(content, imageUris.size)
+    val visibleContent = visibleContent()
+    return readableMessageText(visibleContent, imageUris.size).ifBlank { receivedAttachmentSummary() }
 }
 
 internal fun ChatUiMessage.previewContent(): String {
-    return readableContent().ifBlank { "Streaming..." }
+    return readableContent().ifBlank { STREAMING_PREVIEW }
 }
 
 internal fun ChatUiMessage.editableContent(): String {
-    return visibleMessageText(content, imageUris.size)
+    return visibleContent()
+}
+
+internal fun ChatUiMessage.visibleContent(): String {
+    return visibleReceivedAttachmentText(visibleMessageText(content, imageUris.size))
 }
 
 internal fun PendingPrompt.readableContent(): String {
@@ -1333,6 +1380,14 @@ private fun PendingPrompt?.takeUnlessRemoved(removedMessageIds: Set<String>): Pe
 private fun PendingPrompt.userMessageId(): String? {
     val sentAt = id.removePrefix("retry-")
     return if (sentAt == id) null else "user-$sentAt"
+}
+
+private fun ChatUiMessage.receivedAttachmentSummary(): String {
+    return when (receivedAttachments.size) {
+        0 -> ""
+        1 -> receivedAttachments.first().kind.name
+        else -> "${receivedAttachments.size} attachments"
+    }
 }
 
 internal fun buildChatPromptPayload(
@@ -1449,6 +1504,16 @@ private fun String.firstNonBlankLine(): String? {
         .firstOrNull { it.isNotBlank() }
 }
 
+private fun List<ChatUiMessage>.lastStablePreview(): String? {
+    for (message in asReversed()) {
+        if (message.isStreaming && message.content.isBlank() && message.imageUris.isEmpty() && message.receivedAttachments.isEmpty()) continue
+        val preview = message.readableContent().firstNonBlankLine() ?: continue
+        if (preview == STREAMING_PREVIEW) continue
+        return preview
+    }
+    return null
+}
+
 private fun ChatUiState.withAddedAttachment(attachment: ChatAttachment): ChatUiState {
     val duplicate = attachments.any { it.normalizedKind() == attachment.normalizedKind() && it.uri == attachment.uri }
     return if (duplicate) this else copy(attachments = attachments + attachment)
@@ -1501,12 +1566,14 @@ internal class MonotonicIdGenerator(
 
 private fun MessageEntity.toChatUiMessage(): ChatUiMessage {
     val imageUris = imageUrisJson.toMessageImageUris().ifEmpty { legacyImageUrisFromText(content) }
+    val receivedAttachments = if (role == "user") emptyList() else receivedAttachmentsFromMessage(content)
     return ChatUiMessage(
         id = "history-$id",
         role = role,
         content = content,
         time = formatChatClockTime(timestamp),
         imageUris = imageUris,
+        receivedAttachments = receivedAttachments,
     )
 }
 
@@ -1566,6 +1633,7 @@ private const val MAX_GENERATED_SESSION_TITLE_LENGTH = 72
 private const val MIN_GENERATED_SESSION_TITLE_WORD_BOUNDARY = 24
 private const val MAX_RETRIES = 3
 private const val CHAT_CLOCK_PLACEHOLDER = "--:--"
+private const val STREAMING_PREVIEW = "Streaming..."
 private const val MAX_REASONABLE_CHAT_TIMESTAMP_MILLIS = 253_402_300_799_999L
 private val RETRY_BACKOFF_MS = longArrayOf(2_000L, 4_000L, 8_000L)
 private const val RATE_LIMIT_WINDOW_MS = 10_000L

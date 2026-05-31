@@ -12,12 +12,34 @@ class HermesCommandSuggestionsTest {
             .map { it.command.substringBefore(" ") }
             .toSet()
 
-        assertTrue(commands.contains("/approve"))
-        assertTrue(commands.contains("/deny"))
-        assertTrue(commands.contains("/background"))
-        assertTrue(commands.contains("/tools"))
-        assertTrue(commands.contains("/skills"))
-        assertTrue(commands.contains("/reasoning"))
+        assertTrue(
+            commands.containsAll(
+                setOf(
+                    "/approve",
+                    "/deny",
+                    "/background",
+                    "/goal",
+                    "/voice",
+                    "/tools",
+                    "/skills",
+                    "/reasoning",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun suggestionsFilterVoiceCommands() {
+        val suggestions = hermesCommandSuggestions(
+            selectedModel = "hermes-agent",
+            selectedLabel = "Hermes",
+            query = "/voice",
+        )
+
+        assertTrue(suggestions.isNotEmpty())
+        assertTrue(suggestions.all { it.categoryId == "voice" })
+        assertTrue(suggestions.any { it.command == "/voice status" })
+        assertTrue(suggestions.any { it.command == "/voice join" })
     }
 
     @Test
@@ -57,6 +79,20 @@ class HermesCommandSuggestionsTest {
         assertTrue(suggestions.isNotEmpty())
         assertTrue(suggestions.all { it.command.startsWith("/tools") })
         assertFalse(suggestions.any { it.command == "/skills" })
+    }
+
+    @Test
+    fun suggestionsFilterPersistentGoalCommands() {
+        val suggestions = hermesCommandSuggestions(
+            selectedModel = "hermes-agent",
+            selectedLabel = "Hermes",
+            query = "/goal",
+        )
+
+        assertTrue(suggestions.isNotEmpty())
+        assertTrue(suggestions.all { it.categoryId == "goals" })
+        assertTrue(suggestions.any { it.command == "/goal status" })
+        assertTrue(suggestions.any { it.command == "/goal clear" })
     }
 
     @Test

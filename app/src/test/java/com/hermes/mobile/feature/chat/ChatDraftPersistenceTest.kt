@@ -4,8 +4,11 @@ import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import com.hermes.mobile.core.data.HermesRepository
 import com.hermes.mobile.core.data.local.MessageEntity
+import com.hermes.mobile.core.data.local.SessionEntity
+import com.hermes.mobile.core.model.ChatCompletionRequest
 import com.hermes.mobile.core.model.DashboardModelOptionsResponse
 import com.hermes.mobile.core.model.DashboardProviderDto
+import com.hermes.mobile.core.model.chatRequestMessage
 import com.hermes.mobile.core.network.SseEvent
 import com.hermes.mobile.core.settings.AppPreferences
 import io.mockk.coEvery
@@ -180,6 +183,66 @@ class ChatDraftPersistenceTest {
         assertEquals("", viewModel.uiState.value.draft)
         assertEquals("", savedStateHandle["draft"])
         assertEquals(1, viewModel.uiState.value.queuedPrompts.size)
+    }
+
+    @Test
+    fun reenteringChatWithActiveStreamShowsUserMessageAndTypingImmediately() = runTest(dispatcher) {
+        val sessionId = "session-active"
+        val repository = mockk<HermesRepository>()
+        val context = mockk<Context>(relaxed = true)
+        val stream = MutableSharedFlow<SseEvent>()
+        val coordinator = ChatStreamCoordinator(repository)
+
+        coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
+        coEvery { repository.cachedMessages(sessionId) } returns emptyList()
+        coEvery { repository.syncMessages(sessionId) } returns Result.success(Unit)
+        coEvery { repository.cachedSession(sessionId) } returns null
+        coEvery { repository.saveLocalSession(any()) } just runs
+        coEvery { repository.saveLocalMessage(any()) } just runs
+        coEvery { repository.pushMessageToRemote(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { repository.markSessionRead(any(), any()) } just runs
+        every { repository.streamChat(any(), sessionId) } returns stream
+
+        coordinator.start(
+            ChatStreamCommand(
+                session = SessionEntity(
+                    id = sessionId,
+                    title = "Hermes",
+                    source = "mobile",
+                    startedAt = 1L,
+                    endedAt = null,
+                    messageCount = 0,
+                    model = "hermes-agent",
+                    localLastActivityAt = 1L,
+                ),
+                userMessage = MessageEntity(
+                    id = 10L,
+                    sessionId = sessionId,
+                    role = "user",
+                    content = "hello",
+                    timestamp = 10L,
+                ),
+                assistantMessageId = 11L,
+                requestBuilder = { ChatCompletionRequest(messages = listOf(chatRequestMessage("user", "hello"))) },
+            ),
+        )
+        advanceUntilIdle()
+
+        val viewModel = ChatViewModel(
+            SavedStateHandle(mapOf("activeSessionId" to sessionId)),
+            repository,
+            appPreferences(),
+            context,
+            coordinator,
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("user", "assistant"), viewModel.uiState.value.messages.map { it.role })
+        assertEquals("hello", viewModel.uiState.value.messages.first().content)
+        assertEquals(true, viewModel.uiState.value.messages.last().isStreaming)
+        assertEquals(true, viewModel.uiState.value.isConnecting || viewModel.uiState.value.isStreaming)
+
+        coordinator.stop(sessionId)
     }
 
     private fun newViewModel(savedStateHandle: SavedStateHandle): ChatViewModel {

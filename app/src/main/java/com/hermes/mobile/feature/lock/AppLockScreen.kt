@@ -52,16 +52,11 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.airbnb.lottie.compose.LottieAnimation
-import com.airbnb.lottie.compose.LottieCompositionSpec
-import com.airbnb.lottie.compose.LottieConstants
-import com.airbnb.lottie.compose.rememberLottieComposition
-import com.hermes.mobile.R
-import com.hermes.mobile.ui.components.frostedGlass
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.content.ContextWrapper
 
 @Composable
 fun AppLockScreen(
@@ -204,12 +199,24 @@ private fun LockStatusChip(text: String) {
     }
 }
 
+private fun Context.findFragmentActivity(): FragmentActivity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is FragmentActivity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
+
 private fun buildPrompt(
     context: Context,
     onSuccess: () -> Unit,
     onError: (Int, CharSequence) -> Unit,
 ): BiometricPrompt {
-    val activity = context as FragmentActivity
+    val activity = context.findFragmentActivity()
+        ?: throw IllegalStateException("Context is not a FragmentActivity.")
     return BiometricPrompt(
         activity,
         ContextCompat.getMainExecutor(context),

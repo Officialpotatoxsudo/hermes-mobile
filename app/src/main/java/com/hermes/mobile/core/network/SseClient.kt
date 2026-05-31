@@ -4,9 +4,11 @@ import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.model.ChatCompletionRequest
 import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.model.TokenUsage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,6 +38,12 @@ class SseClient @Inject constructor(
     private val tokenStore: TokenStore,
     private val json: Json,
 ) {
+    suspend fun completeChat(request: ChatCompletionRequest, sessionId: String? = null): List<SseEvent> {
+        return withContext(Dispatchers.IO) {
+            executeNonStreaming(request, sessionId, SsePayloadParser(json))
+        }
+    }
+
     fun streamChat(request: ChatCompletionRequest, sessionId: String? = null): Flow<SseEvent> = callbackFlow {
         val parser = SsePayloadParser(json)
         val streamingClient = client.newBuilder()

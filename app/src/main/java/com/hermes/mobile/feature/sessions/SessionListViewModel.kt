@@ -9,6 +9,8 @@ import com.hermes.mobile.core.error.ErrorMapper
 import com.hermes.mobile.core.settings.AgentProfile
 import com.hermes.mobile.core.settings.AppPreferences
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
+import com.hermes.mobile.feature.chat.ChatStreamCoordinator
+import com.hermes.mobile.feature.chat.ChatStreamSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +27,7 @@ data class SessionListUiState(
     val error: String? = null,
     val sessions: List<SessionEntity> = emptyList(),
     val agents: List<AgentProfile> = AppPreferences.defaultAgents,
+    val activeStreams: Map<String, ChatStreamSnapshot> = emptyMap(),
     val agentId: String? = null,
 )
 
@@ -33,6 +36,7 @@ class SessionListViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repository: HermesRepository,
     private val appPreferences: AppPreferences,
+    private val streamCoordinator: ChatStreamCoordinator,
 ) : ViewModel() {
     private val routeAgentId = savedStateHandle.cleanString("agentId")
     private val controls = MutableStateFlow(SessionListUiState(agentId = routeAgentId))
@@ -40,17 +44,18 @@ class SessionListViewModel @Inject constructor(
     val uiState: StateFlow<SessionListUiState> = combine(
         repository.sessions(""),
         appPreferences.agents,
+        streamCoordinator.streams,
         controls,
-    ) { sessions, agents, current ->
-            val query = current.query.trim()
-            val agentSessions = filterSessionsForAgent(sessions, current.agentId)
-            val filtered = if (query.isBlank()) {
-                agentSessions
-            } else {
-                agentSessions.filter { session -> sessionMatchesQuery(session, query) }
-            }
-            current.copy(sessions = filtered, agents = agents)
+    ) { sessions, agents, streams, current ->
+        val query = current.query.trim()
+        val agentSessions = filterSessionsForAgent(sessions, current.agentId)
+        val filtered = if (query.isBlank()) {
+            agentSessions
+        } else {
+            agentSessions.filter { session -> sessionMatchesQuery(session, query) }
         }
+        current.copy(sessions = filtered, agents = agents, activeStreams = streams)
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 
     init {

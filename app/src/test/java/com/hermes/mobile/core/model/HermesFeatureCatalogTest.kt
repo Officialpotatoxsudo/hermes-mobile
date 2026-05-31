@@ -13,6 +13,8 @@ class HermesFeatureCatalogTest {
         assertEquals(
             setOf(
                 "chat",
+                "goals",
+                "voice",
                 "memory",
                 "runs",
                 "skills",
@@ -67,6 +69,8 @@ class HermesFeatureCatalogTest {
                     "/approve",
                     "/deny",
                     "/background",
+                    "/goal",
+                    "/voice",
                     "/queue",
                     "/steer",
                     "/model",
@@ -81,6 +85,46 @@ class HermesFeatureCatalogTest {
                     "/tools",
                     "/skills",
                     "/rollback",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun catalogExposesVoiceControls() {
+        val voiceCategory = hermesFeatureCatalog.first { it.id == "voice" }
+        val commandTargets = voiceCategory.actions.map { it.target }.toSet()
+
+        assertEquals("Voice", voiceCategory.title)
+        assertTrue(
+            commandTargets.containsAll(
+                setOf(
+                    "/voice",
+                    "/voice on",
+                    "/voice tts",
+                    "/voice off",
+                    "/voice status",
+                    "/voice join",
+                    "/voice leave",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun catalogExposesPersistentGoalControls() {
+        val goalCategory = hermesFeatureCatalog.first { it.id == "goals" }
+        val commandTargets = goalCategory.actions.map { it.target }.toSet()
+
+        assertEquals("Goals", goalCategory.title)
+        assertTrue(
+            commandTargets.containsAll(
+                setOf(
+                    "/goal ",
+                    "/goal status",
+                    "/goal pause",
+                    "/goal resume",
+                    "/goal clear",
                 ),
             ),
         )

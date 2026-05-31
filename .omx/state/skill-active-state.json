@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "active": true,
+  "skill": "analyze",
+  "keyword": "investigate",
+  "phase": "planning",
+  "activated_at": "2026-05-18T18:25:20.501Z",
+  "updated_at": "2026-05-18T20:09:46.466Z",
+  "source": "keyword-detector",
+  "session_id": "",
+  "thread_id": "019e3cb0-f34a-7b62-83c3-f250ac9017cf",
+  "turn_id": "019e3cb0-f395-7781-9677-cdeecb6d74ed",
+  "iteration": 1,
+  "last_turn_at": "2026-05-18T20:13:27.546Z"
+}

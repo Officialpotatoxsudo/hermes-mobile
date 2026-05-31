@@ -23,6 +23,8 @@ data class SettingsUiState(
     val hideChatPreviews: Boolean = true,
     val serverUrl: String = "",
     val showLogoutConfirm: Boolean = false,
+    val isLoggingOut: Boolean = false,
+    val logoutError: String? = null,
 )
 
 @HiltViewModel
@@ -62,11 +64,11 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun confirmLogout() {
-        controls.update { it.copy(showLogoutConfirm = true) }
+        controls.update { it.copy(showLogoutConfirm = true, logoutError = null) }
     }
 
     fun dismissLogout() {
-        controls.update { it.copy(showLogoutConfirm = false) }
+        controls.update { it.copy(showLogoutConfirm = false, logoutError = null) }
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -93,11 +95,24 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun logout() {
+    fun logout(onComplete: () -> Unit = {}) {
+        if (controls.value.isLoggingOut) return
+        controls.update { it.copy(isLoggingOut = true, logoutError = null) }
         viewModelScope.launch {
-            repository.clearLocalDataForActiveConnection()
-            tokenStore.clearCredentials()
-            controls.update { it.copy(showLogoutConfirm = false) }
+            runCatching {
+                repository.clearLocalDataForActiveConnection()
+                tokenStore.clearCredentials()
+            }.onSuccess {
+                controls.update { it.copy(showLogoutConfirm = false, isLoggingOut = false, logoutError = null) }
+                onComplete()
+            }.onFailure { error ->
+                controls.update {
+                    it.copy(
+                        isLoggingOut = false,
+                        logoutError = error.message ?: "Could not log out. Try again.",
+                    )
+                }
+            }
         }
     }
 }

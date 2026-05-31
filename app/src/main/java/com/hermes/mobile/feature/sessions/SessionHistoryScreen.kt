@@ -45,7 +45,10 @@ import com.hermes.mobile.core.data.local.MessageEntity
 import com.hermes.mobile.core.util.formatMessageCount
 import com.hermes.mobile.core.util.legacyImageUrisFromText
 import com.hermes.mobile.core.util.messageImageUrisFromJson
+import com.hermes.mobile.core.util.receivedAttachmentsFromMessage
 import com.hermes.mobile.core.util.visibleMessageText
+import com.hermes.mobile.core.util.visibleReceivedAttachmentText
+import com.hermes.mobile.feature.chat.ReceivedAttachments
 import com.hermes.mobile.ui.components.HermesHeader
 import com.hermes.mobile.ui.components.frostedGlass
 import kotlinx.coroutines.delay
@@ -129,7 +132,10 @@ private fun HistoryBubble(message: MessageEntity) {
         messageImageUrisFromJson(message.imageUrisJson)
             .ifEmpty { legacyImageUrisFromText(message.content) }
     }
-    val text = historyMessageText(message.content, imageUris.size)
+    val receivedAttachments = remember(message.role, message.content) {
+        if (message.role == "user") emptyList() else receivedAttachmentsFromMessage(message.content)
+    }
+    val text = historyMessageText(visibleReceivedAttachmentText(message.content), imageUris.size)
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = if (outgoing) Alignment.CenterEnd else Alignment.CenterStart,
@@ -169,6 +175,11 @@ private fun HistoryBubble(message: MessageEntity) {
                     }
                 }
             }
+            ReceivedAttachments(
+                attachments = receivedAttachments,
+                toneColor = if (outgoing) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(bottom = if (text.isNotBlank()) 8.dp else 0.dp),
+            )
             if (text.isNotBlank()) {
                 Text(
                     text = text,

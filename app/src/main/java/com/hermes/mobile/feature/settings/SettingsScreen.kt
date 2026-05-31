@@ -26,7 +26,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -150,7 +150,16 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            LogoutRow("Log out", "Clear credentials", viewModel::confirmLogout)
+            LogoutRow("Log out", if (state.isLoggingOut) "Clearing local credentials..." else "Clear credentials", viewModel::confirmLogout)
+
+            state.logoutError?.let { error ->
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+                )
+            }
 
             AnimatedVisibility(
                 visible = state.showLogoutConfirm,
@@ -162,11 +171,10 @@ fun SettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         HermesChip("Cancel", false, viewModel::dismissLogout)
                         HermesChip(
-                            text = "Confirm logout",
+                            text = if (state.isLoggingOut) "Logging out..." else "Confirm logout",
                             selected = true,
                             onClick = {
-                                viewModel.logout()
-                                onLogout()
+                                viewModel.logout(onComplete = onLogout)
                             },
                             danger = true,
                         )
@@ -280,8 +288,8 @@ private fun ConnectionRow(url: String, onClick: () -> Unit) {
             Text(url, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(
-            imageVector = Icons.Rounded.ContentCopy,
-            contentDescription = "Copy URL",
+            imageVector = Icons.Rounded.Edit,
+            contentDescription = "Edit connection",
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 8.dp)
         )

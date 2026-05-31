@@ -60,6 +60,7 @@ import com.hermes.mobile.ui.components.frostedGlass
 @Composable
 fun ConnectionSetupScreen(
     onContinue: () -> Unit,
+    onCancel: (() -> Unit)? = null,
     viewModel: ConnectionSetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -98,16 +99,27 @@ fun ConnectionSetupScreen(
             Spacer(Modifier.size(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "Connect Hermes",
+                    text = if (state.isEditingExistingConnection) "Edit connection" else "Connect Hermes",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = colors.onBackground,
                 )
                 Text(
-                    text = "Set endpoint and optional key.",
+                    text = if (state.isEditingExistingConnection) "Update endpoint or keep the current key." else "Set endpoint and optional key.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            onCancel?.let { cancel ->
+                Text(
+                    text = "Cancel",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50.dp))
+                        .clickable(onClick = cancel)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
         }
@@ -234,7 +246,7 @@ fun ConnectionSetupScreen(
                     enabled = !state.isChecking,
                     interactionSource = buttonInteraction,
                     indication = null,
-                    onClickLabel = "Connect",
+                    onClickLabel = if (state.isEditingExistingConnection) "Save connection" else "Connect",
                 ) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.checkAndSave(onContinue)
@@ -242,7 +254,13 @@ fun ConnectionSetupScreen(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                if (state.isChecking) "Checking..." else "Connect",
+                if (state.isChecking) {
+                    "Checking..."
+                } else if (state.isEditingExistingConnection) {
+                    "Save connection"
+                } else {
+                    "Connect"
+                },
                 color = colors.onPrimary,
                 style = MaterialTheme.typography.labelLarge,
             )

@@ -12,6 +12,7 @@ object ErrorMapper {
             error is SocketTimeoutException || rawMessage.contains("timeout", ignoreCase = true) -> "Connection timed out. Hermes may still be working. Try again."
             httpAuthPattern.containsMatchIn(rawMessage) -> "API key rejected. Check your credentials."
             http404Pattern.containsMatchIn(rawMessage) -> "Hermes endpoint not found. Check server version and URL."
+            rawMessage.contains("tunnel closed", ignoreCase = true) -> "Tunnel closed. Keep the Hermes server tunnel running, then retry."
             rawMessage.contains("ngrok", ignoreCase = true) -> "Tunnel is offline or expired. Restart ngrok and update server URL."
             rawMessage.contains("Expected text/event-stream", ignoreCase = true) -> "Streaming unavailable. Retrying with normal response."
             message.isNotBlank() -> message

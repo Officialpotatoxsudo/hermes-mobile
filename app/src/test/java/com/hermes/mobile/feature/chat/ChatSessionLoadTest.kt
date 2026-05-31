@@ -103,6 +103,51 @@ class ChatSessionLoadTest {
     }
 
     @Test
+    fun loadSessionRestoresCachedMessagesPrunedBySync() = runTest(dispatcher) {
+        val repository = mockk<HermesRepository>()
+        val context = mockk<Context>(relaxed = true)
+        val firstMessage = MessageEntity(
+            id = 1L,
+            sessionId = "session-1",
+            role = "user",
+            content = "first",
+            timestamp = 1L,
+        )
+        val secondMessage = MessageEntity(
+            id = 2L,
+            sessionId = "session-1",
+            role = "user",
+            content = "second",
+            timestamp = 2L,
+        )
+
+        coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
+        var cachedMessageCalls = 0
+        coEvery { repository.cachedMessages("session-1") } answers {
+            cachedMessageCalls += 1
+            if (cachedMessageCalls == 1) listOf(firstMessage, secondMessage) else listOf(secondMessage)
+        }
+        coEvery { repository.syncMessages("session-1") } returns Result.success(Unit)
+        coEvery { repository.saveLocalMessages(any()) } just runs
+        every { repository.messages("session-1") } returns flowOf(emptyList())
+
+        val viewModel = ChatViewModel(
+            savedStateHandle = SavedStateHandle(mapOf("activeSessionId" to "session-1")),
+            repository = repository,
+            appPreferences = appPreferences(),
+            appContext = context,
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("first", "second"), viewModel.uiState.value.messages.map { it.content })
+        coVerify {
+            repository.saveLocalMessages(match { messages ->
+                messages.single().id == firstMessage.id && messages.single().content == "first"
+            })
+        }
+    }
+
+    @Test
     fun restoredAgentChatUsesStoredAgentName() = runTest(dispatcher) {
         val repository = mockk<HermesRepository>()
         val context = mockk<Context>(relaxed = true)
@@ -130,6 +175,42 @@ class ChatSessionLoadTest {
         advanceUntilIdle()
 
         assertEquals("Research Agent", viewModel.uiState.value.agentName)
+    }
+
+    @Test
+    fun restorePrefersResolvedActiveSessionOverStaleRouteSession() = runTest(dispatcher) {
+        val repository = mockk<HermesRepository>()
+        val context = mockk<Context>(relaxed = true)
+
+        coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
+        coEvery { repository.syncMessages("remote-session-1") } returns Result.success(Unit)
+        coEvery { repository.cachedMessages("remote-session-1") } returns listOf(
+            MessageEntity(
+                id = 1L,
+                sessionId = "remote-session-1",
+                role = "user",
+                content = "resolved",
+                timestamp = 1L,
+            ),
+        )
+        every { repository.messages("remote-session-1") } returns flowOf(emptyList())
+
+        val viewModel = ChatViewModel(
+            savedStateHandle = SavedStateHandle(
+                mapOf(
+                    "sessionId" to "stale-local-session",
+                    "activeSessionId" to "remote-session-1",
+                ),
+            ),
+            repository = repository,
+            appPreferences = appPreferences(),
+            appContext = context,
+        )
+        advanceUntilIdle()
+
+        assertEquals("remote-session-1", viewModel.uiState.value.sessionId)
+        assertEquals(listOf("resolved"), viewModel.uiState.value.messages.map { it.content })
+        coVerify(exactly = 0) { repository.syncMessages("stale-local-session") }
     }
 
     @Test
@@ -219,6 +300,18 @@ class ChatSessionLoadTest {
 
         assertFalse(labels.any { it == "connecting" })
         assertEquals(listOf("searching web", "thinking", "typing", "queued"), labels)
+    }
+
+    @Test
+    fun activityLabelIgnoresStaleToolAfterStreamStops() {
+        val state = ChatUiState(
+            tools = listOf(ToolProgress(label = "tool output", tool = "search", status = "running")),
+            isConnecting = false,
+            isStreaming = false,
+            connectionState = ConnectionState.Connected,
+        )
+
+        assertEquals("connected", activityLabel(state))
     }
 
     @Test

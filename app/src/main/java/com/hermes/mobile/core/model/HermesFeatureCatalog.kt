@@ -49,6 +49,32 @@ val hermesFeatureCatalog: List<HermesFeatureCategory> = listOf(
         ),
     ),
     HermesFeatureCategory(
+        id = "goals",
+        title = "Goals",
+        subtitle = "Persistent Hermes goals with status, pause, resume, and clear",
+        actions = listOf(
+            command("goals.set", "Set goal", "Tell Hermes what to keep working toward", "/goal "),
+            command("goals.status", "Goal status", "Show active goal progress", "/goal status"),
+            command("goals.pause", "Pause goal", "Pause automatic continuation", "/goal pause"),
+            command("goals.resume", "Resume goal", "Resume automatic continuation", "/goal resume"),
+            command("goals.clear", "Clear goal", "Remove the standing goal", "/goal clear"),
+        ),
+    ),
+    HermesFeatureCategory(
+        id = "voice",
+        title = "Voice",
+        subtitle = "CLI, gateway voice replies, and Discord voice-channel controls",
+        actions = listOf(
+            command("voice.toggle", "Toggle voice", "Toggle Hermes voice mode", "/voice"),
+            command("voice.on", "Voice replies", "Reply with speech for voice messages", "/voice on"),
+            command("voice.tts", "Speak all replies", "Enable text-to-speech for every reply", "/voice tts"),
+            command("voice.off", "Voice off", "Return to text-only responses", "/voice off"),
+            command("voice.status", "Voice status", "Show current voice state", "/voice status"),
+            command("voice.join", "Join channel", "Join the current Discord voice channel", "/voice join"),
+            command("voice.leave", "Leave channel", "Disconnect from Discord voice channel", "/voice leave"),
+        ),
+    ),
+    HermesFeatureCategory(
         id = "memory",
         title = "Memory",
         subtitle = "Persistent memory through Hermes agent runs",

@@ -2,6 +2,7 @@ package com.hermes.mobile.navigation
 
 import com.hermes.mobile.core.settings.AgentProfile
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class HermesNavGraphRouteTest {
@@ -39,6 +40,28 @@ class HermesNavGraphRouteTest {
                 currentRoute = Routes.Home,
             ),
         )
+        assertEquals(
+            false,
+            shouldShowAppLock(
+                hasCredentials = true,
+                appLockEnabled = true,
+                isUnlocked = false,
+                currentRoute = Routes.AppLock,
+            ),
+        )
+    }
+
+    @Test
+    fun splashWaitsForCredentialStoreBeforeChoosingConnectionSetup() {
+        assertEquals(
+            Routes.Splash,
+            splashNextRoute(
+                connectionLoaded = false,
+                hasCredentials = false,
+                appLockEnabled = true,
+                isUnlocked = false,
+            ),
+        )
     }
 
     @Test
@@ -46,6 +69,7 @@ class HermesNavGraphRouteTest {
         assertEquals(
             Routes.Home,
             splashNextRoute(
+                connectionLoaded = true,
                 hasCredentials = true,
                 appLockEnabled = false,
                 isUnlocked = false,
@@ -117,9 +141,9 @@ class HermesNavGraphRouteTest {
     }
 
     @Test
-    fun sessionListClickOpensHistoryRoute() {
+    fun sessionListClickOpensChatRoute() {
         assertEquals(
-            "session_history/telegram%3Atopic%2F42%20A",
+            "chat/telegram%3Atopic%2F42%20A",
             sessionListClickRoute(" telegram:topic/42 A "),
         )
     }
@@ -141,5 +165,14 @@ class HermesNavGraphRouteTest {
             "chat/agent-chat-hermes--2000?agentName=Hermes%20Agent",
             agentChatRoute(agent, latestSessionId = "agent-chat-hermes--2000"),
         )
+    }
+
+    @Test
+    fun agentChatRouteCreatesFreshThreadWhenNoLatestSession() {
+        val agent = AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private chat", initial = "H")
+        val route = agentChatRoute(agent)
+
+        assertTrue(route.startsWith("chat/agent-chat-hermes--"))
+        assertTrue(route.endsWith("?agentName=Hermes%20Agent"))
     }
 }

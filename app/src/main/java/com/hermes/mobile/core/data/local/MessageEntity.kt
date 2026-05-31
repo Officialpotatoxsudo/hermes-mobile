@@ -7,7 +7,7 @@ import androidx.room.Index
 
 @Entity(
     tableName = "messages",
-    primaryKeys = ["account_scope", "id"],
+    primaryKeys = ["account_scope", "session_id", "id"],
     foreignKeys = [
         ForeignKey(
             entity = SessionEntity::class,

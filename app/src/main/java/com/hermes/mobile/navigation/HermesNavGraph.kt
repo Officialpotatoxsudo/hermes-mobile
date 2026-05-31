@@ -66,7 +66,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermes.mobile.core.settings.AgentProfile
-import com.hermes.mobile.core.util.agentChatSessionId
+import com.hermes.mobile.core.util.newAgentChatSessionId
 import com.hermes.mobile.feature.agent.AgentControlScreen
 import com.hermes.mobile.feature.chat.ChatShellScreen
 import com.hermes.mobile.feature.connection.ConnectionSetupScreen
@@ -106,6 +106,7 @@ private val mainTabs = listOf(
 
 @Composable
 fun HermesNavGraph(
+    connectionLoaded: Boolean,
     hasCredentials: Boolean,
     appLockEnabled: Boolean = true,
     isUnlocked: Boolean,
@@ -118,10 +119,15 @@ fun HermesNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    LaunchedEffect(hasCredentials, isUnlocked, currentRoute) {
+    LaunchedEffect(connectionLoaded, hasCredentials, appLockEnabled, isUnlocked, currentRoute) {
+        if (currentRoute == Routes.Splash && connectionLoaded) {
+            navController.navigate(splashNextRoute(connectionLoaded, hasCredentials, appLockEnabled, isUnlocked)) {
+                popUpTo(Routes.Splash) { inclusive = true }
+            }
+            return@LaunchedEffect
+        }
         if (shouldShowAppLock(hasCredentials, appLockEnabled, isUnlocked, currentRoute)) {
             navController.navigate(Routes.AppLock) {
-                popUpTo(Routes.Home) { inclusive = true }
                 launchSingleTop = true
             }
         }
@@ -211,7 +217,6 @@ fun HermesNavGraph(
                                 Text(
                                     tab.label,
                                     style = MaterialTheme.typography.labelLarge.copy(
-                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                     ),
                                     color = color,
@@ -224,12 +229,17 @@ fun HermesNavGraph(
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
+            val navHostModifier = if (isMainTab) {
+                Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            } else {
+                Modifier.fillMaxSize()
+            }
              NavHost(
                 navController = navController,
                 startDestination = startDestination,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
+                modifier = navHostModifier,
                 enterTransition = {
                     slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = spring(dampingRatio = 0.85f, stiffness = 350f)) + fadeIn(animationSpec = tween(300))
                 },
@@ -246,7 +256,8 @@ fun HermesNavGraph(
                 composable(Routes.Splash) {
                     SplashScreen(
                         onFinished = {
-                            val next = splashNextRoute(hasCredentials, appLockEnabled, isUnlocked)
+                            val next = splashNextRoute(connectionLoaded, hasCredentials, appLockEnabled, isUnlocked)
+                            if (next == Routes.Splash) return@SplashScreen
                             navController.navigate(next) {
                                 popUpTo(Routes.Splash) { inclusive = true }
                             }
@@ -260,14 +271,19 @@ fun HermesNavGraph(
                                 popUpTo(Routes.ConnectionSetup) { inclusive = true }
                             }
                         },
+                        onCancel = navController.previousBackStackEntry?.let {
+                            { navController.popBackStack() }
+                        },
                     )
                 }
                 composable(Routes.AppLock) {
                     AppLockScreen(
                         onUnlocked = {
                             onUnlocked()
-                            navController.navigate(Routes.Home) {
-                                popUpTo(Routes.AppLock) { inclusive = true }
+                            if (!navController.popBackStack()) {
+                                navController.navigate(Routes.Home) {
+                                    popUpTo(Routes.AppLock) { inclusive = true }
+                                }
                             }
                         },
                     )
@@ -434,15 +450,18 @@ internal fun shouldShowAppLock(
         appLockEnabled &&
         !isUnlocked &&
         currentRoute != null &&
-        currentRoute != Routes.Splash
+        currentRoute != Routes.Splash &&
+        currentRoute != Routes.AppLock
 }
 
 internal fun splashNextRoute(
+    connectionLoaded: Boolean,
     hasCredentials: Boolean,
     appLockEnabled: Boolean,
     isUnlocked: Boolean,
 ): String {
     return when {
+        !connectionLoaded -> Routes.Splash
         !hasCredentials -> Routes.ConnectionSetup
         appLockEnabled && !isUnlocked -> Routes.AppLock
         else -> Routes.Home
@@ -452,7 +471,7 @@ internal fun splashNextRoute(
 internal fun mainTabLabels(): List<String> = mainTabs.map { it.label }
 
 internal fun agentChatRoute(agent: AgentProfile, latestSessionId: String? = null): String {
-    return chatRoute(latestSessionId ?: agentChatSessionId(agent.id), agent.name)
+    return chatRoute(latestSessionId ?: newAgentChatSessionId(agent.id), agent.name)
 }
 
 internal fun chatRoute(sessionId: String, agentName: String? = null): String {
@@ -483,7 +502,7 @@ internal fun agentHistoryRoute(agentId: String): String {
     return "${Routes.Sessions}?agentId=${cleanAgentId.routeComponent()}"
 }
 
-internal fun sessionListClickRoute(sessionId: String): String = sessionHistoryRoute(sessionId)
+internal fun sessionListClickRoute(sessionId: String): String = chatRoute(sessionId)
 
 private fun String.cleanRouteValue(): String {
     return trim()
