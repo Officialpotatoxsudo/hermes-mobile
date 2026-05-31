@@ -47,9 +47,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Base64
@@ -62,6 +65,7 @@ data class ChatUiMessage(
     val role: String,
     val content: String,
     val time: String,
+    val reasoning: String = "",
     val isStreaming: Boolean = false,
     val error: String? = null,
     val usage: TokenUsage? = null,
@@ -135,8 +139,15 @@ class ChatViewModel @Inject constructor(
     private val streamCoordinator: ChatStreamCoordinator = ChatStreamCoordinator(repository),
 ) : ViewModel() {
     private val explicitAgentName = savedStateHandle.cleanString("agentName")
-    private val initialSessionId = savedStateHandle.cleanString("activeSessionId")
-        ?: savedStateHandle.cleanString("sessionId")
+    private val routeSessionId = savedStateHandle.cleanString("sessionId")
+    private val activeSessionId = savedStateHandle.cleanString("activeSessionId")
+    private val resolvedFromSessionId = savedStateHandle.cleanString("resolvedFromSessionId")
+    private val initialSessionId = when {
+        routeSessionId != null && activeSessionId != null && resolvedFromSessionId == routeSessionId ->
+            resolveOpenedChatSessionId(routeSessionId, activeSessionId)
+        routeSessionId != null -> routeSessionId
+        else -> activeSessionId
+    }
     private val _uiState = MutableStateFlow(
         ChatUiState(
             sessionId = initialSessionId,
@@ -175,11 +186,14 @@ class ChatViewModel @Inject constructor(
         }
         if (prompt.isNotEmpty() || attachments.isNotEmpty()) {
             val payload = buildChatPromptPayload(prompt, attachments)
-            submit(
+            val accepted = submit(
                 prompt = payload.apiPrompt,
                 displayPrompt = payload.displayPrompt,
                 imageUris = attachments.previewImageUris(),
             )
+            if (accepted) {
+                cleanupAppOwnedMedia(attachments.sentAttachmentCleanupUris())
+            }
         }
     }
 
@@ -574,6 +588,7 @@ class ChatViewModel @Inject constructor(
         val nextSessionId = agentIdFromChatSessionId(_uiState.value.sessionId)
             ?.let(::newAgentChatSessionId)
         savedStateHandle["activeSessionId"] = nextSessionId
+        savedStateHandle.remove<String>("resolvedFromSessionId")
         savedStateHandle["draft"] = ""
         _uiState.update {
             it.copy(
@@ -633,11 +648,11 @@ class ChatViewModel @Inject constructor(
         prompt: String,
         displayPrompt: String = prompt,
         imageUris: List<String> = _uiState.value.attachments.previewImageUris(),
-    ) {
+    ): Boolean {
         val state = _uiState.value
         val replyText = state.replyTarget?.let(::replyPreviewText)
         val apiPrompt = withReplyContext(prompt, state.replyTarget)
-        submitPreparedPrompt(
+        return submitPreparedPrompt(
             PendingPrompt(
                 id = "pending-${messageIds.next()}",
                 text = apiPrompt,
@@ -648,17 +663,17 @@ class ChatViewModel @Inject constructor(
         )
     }
 
-    private fun submitPreparedPrompt(prompt: PendingPrompt) {
+    private fun submitPreparedPrompt(prompt: PendingPrompt): Boolean {
         val state = _uiState.value
         val rateLimitWait = rateLimitWaitSeconds()
         if (rateLimitWait > 0) {
             _uiState.update { it.copy(error = "Please wait $rateLimitWait seconds") }
-            return
+            return false
         }
         if (state.isConnecting || state.isStreaming) {
             if (state.queuedPrompts.size >= MAX_QUEUE_SIZE) {
                 _uiState.update { it.copy(error = "Queue full. Please wait.") }
-                return
+                return false
             }
             recordSendAttempt()
             savedStateHandle["draft"] = ""
@@ -676,10 +691,11 @@ class ChatViewModel @Inject constructor(
                     replyTarget = null,
                 )
             }
-            return
+            return true
         }
         recordSendAttempt()
         send(prompt.text, displayPrompt = prompt.displayText, replyTo = prompt.replyTo, imageUris = prompt.imageUris)
+        return true
     }
 
     private fun send(
@@ -699,6 +715,7 @@ class ChatViewModel @Inject constructor(
         val assistantId = "assistant-$assistantMessageId"
         val model = state.selectedModel.model.ifBlank { "hermes-agent" }
         val priorMessages = state.messages.filter { it.error == null && !it.isStreaming }
+        val agentInstructions = agentInstructionsForSession(sessionId, state.agents)
         _uiState.update {
             it.copy(
                 draft = "",
@@ -730,6 +747,7 @@ class ChatViewModel @Inject constructor(
             )
         }
         savedStateHandle["activeSessionId"] = sessionId
+        savedStateHandle.remove<String>("resolvedFromSessionId")
         savedStateHandle["draft"] = ""
         rememberOpenedSession(sessionId)
         if (!isCleared) {
@@ -755,13 +773,24 @@ class ChatViewModel @Inject constructor(
                 userMessage = userMessage,
                 assistantMessageId = assistantMessageId,
                 requestBuilder = {
-                    withContext(Dispatchers.IO) {
+                    if (imageUris.isEmpty() && priorMessages.none { it.imageUris.isNotEmpty() }) {
                         buildCompletionRequest(
                             model = model,
                             priorMessages = priorMessages,
                             prompt = prompt,
                             imageUris = imageUris,
+                            systemInstructions = agentInstructions,
                         )
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            buildCompletionRequest(
+                                model = model,
+                                priorMessages = priorMessages,
+                                prompt = prompt,
+                                imageUris = imageUris,
+                                systemInstructions = agentInstructions,
+                            )
+                        }
                     }
                 },
                 onSessionResolved = { resolvedSessionId ->
@@ -782,7 +811,6 @@ class ChatViewModel @Inject constructor(
                             },
                         )
                     }
-                    _uiState.value.sessionId?.let(::persistSessionSnapshot)
                     streamJob = null
                     sendNextQueuedIfIdle()
                 },
@@ -815,9 +843,17 @@ class ChatViewModel @Inject constructor(
             streamCoordinator.streams.collect { streams ->
                 val sessionId = _uiState.value.sessionId ?: return@collect
                 val snapshot = streams[sessionId] ?: return@collect
+                var abandonedMediaUris = emptyList<String>()
                 _uiState.update { state ->
-                    if (state.sessionId == sessionId) state.withStreamSnapshot(snapshot) else state
+                    if (state.sessionId != sessionId) return@update state
+                    val shouldClearQueue = snapshot.shouldAbandonQueuedPrompts() && state.queuedPrompts.isNotEmpty()
+                    if (shouldClearQueue) {
+                        abandonedMediaUris = state.queuedPrompts.flatMap { it.imageUris }
+                    }
+                    val next = state.withStreamSnapshot(snapshot)
+                    if (shouldClearQueue) next.copy(queuedPrompts = emptyList()) else next
                 }
+                cleanupAppOwnedMedia(abandonedMediaUris)
             }
         }
     }
@@ -841,12 +877,15 @@ class ChatViewModel @Inject constructor(
             messagesWithUser.mapIndexed { index, message ->
                 if (index == messageIndex) {
                     val nextContent = snapshot.content.ifBlank { message.content }
+                    val nextAttachments = (snapshot.receivedAttachments + receivedAttachmentsFromMessage(nextContent))
+                        .distinctBy { it.url }
                     message.copy(
                         content = nextContent,
+                        reasoning = snapshot.reasoning.ifBlank { message.reasoning },
                         isStreaming = snapshot.isStreaming || snapshot.isConnecting,
                         error = snapshot.error,
                         usage = snapshot.usage ?: message.usage,
-                        receivedAttachments = receivedAttachmentsFromMessage(nextContent),
+                        receivedAttachments = nextAttachments,
                     )
                 } else {
                     message
@@ -858,10 +897,12 @@ class ChatViewModel @Inject constructor(
                 role = "assistant",
                 content = snapshot.content,
                 time = assistantTime,
+                reasoning = snapshot.reasoning,
                 isStreaming = snapshot.isStreaming || snapshot.isConnecting,
                 error = snapshot.error,
                 usage = snapshot.usage,
-                receivedAttachments = receivedAttachmentsFromMessage(snapshot.content),
+                receivedAttachments = (snapshot.receivedAttachments + receivedAttachmentsFromMessage(snapshot.content))
+                    .distinctBy { it.url },
             )
         }
         return copy(
@@ -901,13 +942,17 @@ class ChatViewModel @Inject constructor(
         priorMessages: List<ChatUiMessage>,
         prompt: String,
         imageUris: List<String>,
+        systemInstructions: String = "",
     ): ChatCompletionRequest {
+        val systemMessages = systemInstructions.takeIf { it.isNotBlank() }
+            ?.let { listOf(chatRequestMessage(role = "system", text = it)) }
+            .orEmpty()
         return ChatCompletionRequest(
             model = model,
-            messages = priorMessages.map { message ->
+            messages = systemMessages + priorMessages.map { message ->
                 chatRequestMessage(
                     role = message.role,
-                    text = message.content,
+                    text = message.visibleContent(),
                     imageDataUrls = message.imageUris.toImageUrls(),
                 )
             } + chatRequestMessage(
@@ -921,13 +966,19 @@ class ChatViewModel @Inject constructor(
     private fun List<String>.toImageUrls(): List<String> = map { it.toImageUrl() }
 
     private fun String.toImageUrl(): String {
-        if (!isAllowedMessageImageUri(this)) error("Unsupported image source")
-        if (startsWith("data:image/", ignoreCase = true)) return this
-        val uri = Uri.parse(this)
+        val cleanUri = trim()
+        if (!isAllowedMessageImageUri(cleanUri)) error("Unsupported image source")
+        if (cleanUri.startsWith("data:image/", ignoreCase = true)) {
+            if (!cleanUri.hasAllowedInlineDataSize(MAX_INLINE_ATTACHMENT_BYTES)) {
+                error("Selected photo is too large")
+            }
+            return cleanUri
+        }
+        val uri = Uri.parse(cleanUri)
         val mime = appContext.contentResolver.getType(uri)
             ?.takeIf { it.startsWith("image/", ignoreCase = true) }
             ?: "image/jpeg"
-        val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytesWithLimit(MAX_INLINE_ATTACHMENT_BYTES) }
             ?: error("Could not open selected photo")
         return "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
     }
@@ -950,8 +1001,10 @@ class ChatViewModel @Inject constructor(
         }
         if (activeSessionId != localSessionId) {
             savedStateHandle["activeSessionId"] = activeSessionId
+            savedStateHandle["resolvedFromSessionId"] = localSessionId
             migrateLocalSession(localSessionId, activeSessionId)
         } else {
+            savedStateHandle.remove<String>("resolvedFromSessionId")
             persistSessionSnapshot(activeSessionId)
         }
     }
@@ -1192,6 +1245,7 @@ class ChatViewModel @Inject constructor(
         val abandonedMediaUris = _uiState.value.attachments.map { it.uri } +
             _uiState.value.queuedPrompts.flatMap { it.imageUris }
         savedStateHandle["activeSessionId"] = sessionId
+        savedStateHandle.remove<String>("resolvedFromSessionId")
         savedStateHandle["draft"] = ""
         _uiState.update {
             it.copy(
@@ -1249,7 +1303,9 @@ class ChatViewModel @Inject constructor(
         id: Long,
         role: String,
         content: String,
+        reasoning: String = "",
         imageUris: List<String> = emptyList(),
+        receivedAttachments: List<ReceivedAttachment> = emptyList(),
     ) {
         viewModelScope.launch {
             repository.saveLocalMessage(
@@ -1258,8 +1314,10 @@ class ChatViewModel @Inject constructor(
                     sessionId = sessionId,
                     role = role,
                     content = content,
+                    reasoning = reasoning,
                     timestamp = id,
                     imageUrisJson = imageUris.toMessageImageJson(),
+                    receivedAttachmentsJson = receivedAttachments.toReceivedAttachmentsJson(),
                 ),
             )
         }
@@ -1269,8 +1327,15 @@ class ChatViewModel @Inject constructor(
         val sessionId = _uiState.value.sessionId ?: return
         val id = messageId.persistedMessageId() ?: return
         val message = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return
-        if (message.content.isBlank()) return
-        persistMessage(sessionId, id, "assistant", message.content)
+        if (message.content.isBlank() && message.reasoningContent().isBlank() && message.receivedAttachments.isEmpty()) return
+        persistMessage(
+            sessionId = sessionId,
+            id = id,
+            role = "assistant",
+            content = message.content,
+            reasoning = message.reasoningContent(),
+            receivedAttachments = message.receivedAttachments,
+        )
     }
 
     private fun deletePersistedMessages(messageIds: List<Long>) {
@@ -1303,8 +1368,10 @@ class ChatViewModel @Inject constructor(
                 sessionId = remoteSessionId,
                 role = message.role,
                 content = message.content,
+                reasoning = message.reasoning,
                 timestamp = id,
                 imageUrisJson = message.imageUris.toMessageImageJson(),
+                receivedAttachmentsJson = message.receivedAttachments.toReceivedAttachmentsJson(),
             )
         }
         val lastMessagePreview = state.messages.lastStablePreview()?.take(200)
@@ -1360,7 +1427,63 @@ internal fun ChatUiMessage.editableContent(): String {
 }
 
 internal fun ChatUiMessage.visibleContent(): String {
-    return visibleReceivedAttachmentText(visibleMessageText(content, imageUris.size))
+    return visibleReceivedAttachmentText(visibleMessageText(splitReasoningFromContent(content).content, imageUris.size))
+}
+
+internal fun ChatUiMessage.reasoningContent(): String {
+    val extracted = splitReasoningFromContent(content).reasoning
+    return listOf(reasoning, extracted)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("\n\n")
+}
+
+internal data class ReasoningSplit(
+    val content: String,
+    val reasoning: String,
+)
+
+internal fun splitReasoningFromContent(content: String): ReasoningSplit {
+    if (content.isBlank()) return ReasoningSplit(content = "", reasoning = "")
+    val visibleBuilder = StringBuilder()
+    val reasoningBlocks = mutableListOf<String>()
+    var cursor = 0
+    var inReasoning = false
+    while (cursor < content.length) {
+        if (inReasoning) {
+            val close = thinkCloseTagPattern.find(content, cursor)
+            if (close == null) {
+                reasoningBlocks += content.substring(cursor)
+                cursor = content.length
+            } else {
+                reasoningBlocks += content.substring(cursor, close.range.first)
+                cursor = close.range.last + 1
+                inReasoning = false
+            }
+        } else {
+            val open = thinkOpenTagPattern.find(content, cursor)
+            if (open == null) {
+                visibleBuilder.append(content.substring(cursor))
+                cursor = content.length
+            } else {
+                visibleBuilder.append(content.substring(cursor, open.range.first))
+                cursor = open.range.last + 1
+                inReasoning = true
+            }
+        }
+    }
+    val reasoning = reasoningBlocks
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString("\n\n")
+    val visible = visibleBuilder.toString()
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim()
+    return ReasoningSplit(
+        content = visible,
+        reasoning = reasoning,
+    )
 }
 
 internal fun PendingPrompt.readableContent(): String {
@@ -1434,6 +1557,12 @@ private fun List<ChatAttachment>.previewImageUris(): List<String> {
         .distinct()
 }
 
+private fun List<ChatAttachment>.sentAttachmentCleanupUris(): List<String> {
+    return filterNot { it.normalizedKind() == "image" }
+        .map { it.uri.trim() }
+        .filter { it.isNotBlank() }
+}
+
 private fun List<String>.toPhotoAttachments(): List<ChatAttachment> {
     return restoredPhotoAttachments(this)
 }
@@ -1460,8 +1589,10 @@ private fun formatAttachmentForPrompt(attachment: ChatAttachment): String {
         kind == "image" -> "Photo attached."
         kind == "voice" && attachment.uri.startsWith("file://") -> {
             runCatching {
-                val file = File(java.net.URI.create(attachment.uri))
-                val payload = Base64.getEncoder().encodeToString(file.readBytes())
+                val file = attachment.uri.toLocalFile()
+                if (file.length() > MAX_INLINE_ATTACHMENT_BYTES) error("Voice note is too large")
+                val payload = file.inputStream().use { it.readBytesWithLimit(MAX_INLINE_ATTACHMENT_BYTES) }
+                    .let { Base64.getEncoder().encodeToString(it) }
                 "Voice note attached: data:audio/mp4;base64,$payload"
             }.getOrDefault("Voice note attached.")
         }
@@ -1485,6 +1616,41 @@ private fun String.cleanAttachmentKind(fallback: String): String {
 
 private fun ChatAttachment.normalizedKind(): String {
     return kind.cleanAttachmentKind("file")
+}
+
+private fun ChatStreamSnapshot.shouldAbandonQueuedPrompts(): Boolean {
+    return error != null &&
+        !isStreaming &&
+        error != STREAM_NON_STREAMING_FALLBACK_MESSAGE
+}
+
+private fun String.toLocalFile(): File {
+    return runCatching { File(java.net.URI.create(this)) }
+        .getOrElse {
+            File(removePrefix("file://").removePrefix("file:"))
+        }
+}
+
+private fun InputStream.readBytesWithLimit(maxBytes: Int): ByteArray {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(DEFAULT_ATTACHMENT_BUFFER_SIZE)
+    var total = 0
+    while (true) {
+        val read = read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > maxBytes) error("Attachment is too large")
+        output.write(buffer, 0, read)
+    }
+    return output.toByteArray()
+}
+
+private fun String.hasAllowedInlineDataSize(maxBytes: Int): Boolean {
+    val payload = substringAfter(',', missingDelimiterValue = "")
+    if (payload.isBlank()) return false
+    val padding = payload.takeLastWhile { it == '=' }.length.coerceAtMost(2)
+    val approximateBytes = (payload.length * 3 / 4) - padding
+    return approximateBytes in 1..maxBytes
 }
 
 private fun String.cleanAttachmentLabel(fallback: String): String {
@@ -1566,11 +1732,17 @@ internal class MonotonicIdGenerator(
 
 private fun MessageEntity.toChatUiMessage(): ChatUiMessage {
     val imageUris = imageUrisJson.toMessageImageUris().ifEmpty { legacyImageUrisFromText(content) }
-    val receivedAttachments = if (role == "user") emptyList() else receivedAttachmentsFromMessage(content)
+    val storedAttachments = receivedAttachmentsJson.toReceivedAttachments()
+    val receivedAttachments = if (role == "user") {
+        emptyList()
+    } else {
+        (storedAttachments + receivedAttachmentsFromMessage(content)).distinctBy { it.url }
+    }
     return ChatUiMessage(
         id = "history-$id",
         role = role,
         content = content,
+        reasoning = reasoning,
         time = formatChatClockTime(timestamp),
         imageUris = imageUris,
         receivedAttachments = receivedAttachments,
@@ -1626,6 +1798,23 @@ private fun String.toMessageImageUris(): List<String> {
     return messageImageUrisFromJson(this)
 }
 
+private fun List<ReceivedAttachment>.toReceivedAttachmentsJson(): String {
+    return Json.encodeToString(this)
+}
+
+private fun String.toReceivedAttachments(): List<ReceivedAttachment> {
+    return runCatching { Json.decodeFromString<List<ReceivedAttachment>>(this) }.getOrDefault(emptyList())
+}
+
+private fun agentInstructionsForSession(sessionId: String?, agents: List<AgentProfile>): String {
+    val agentId = agentIdFromChatSessionId(sessionId) ?: return ""
+    return agents
+        .firstOrNull { it.id == agentId }
+        ?.instructions
+        ?.trim()
+        .orEmpty()
+}
+
 private const val MAX_QUEUE_SIZE = 10
 private const val MAX_ATTACHMENT_LABEL_LENGTH = 48
 private const val MIN_ATTACHMENT_LABEL_WORD_BOUNDARY = 24
@@ -1634,10 +1823,15 @@ private const val MIN_GENERATED_SESSION_TITLE_WORD_BOUNDARY = 24
 private const val MAX_RETRIES = 3
 private const val CHAT_CLOCK_PLACEHOLDER = "--:--"
 private const val STREAMING_PREVIEW = "Streaming..."
+private const val STREAM_NON_STREAMING_FALLBACK_MESSAGE = "Retrying without streaming..."
 private const val MAX_REASONABLE_CHAT_TIMESTAMP_MILLIS = 253_402_300_799_999L
 private val RETRY_BACKOFF_MS = longArrayOf(2_000L, 4_000L, 8_000L)
 private const val RATE_LIMIT_WINDOW_MS = 10_000L
 private const val RATE_LIMIT_MAX_MESSAGES = 5
+private const val MAX_INLINE_ATTACHMENT_BYTES = 8 * 1024 * 1024
+private const val DEFAULT_ATTACHMENT_BUFFER_SIZE = 8 * 1024
+private val thinkOpenTagPattern = Regex("""(?is)<think(?:ing)?>""")
+private val thinkCloseTagPattern = Regex("""(?is)</think(?:ing)?>""")
 
 enum class ExportFormat {
     Markdown,

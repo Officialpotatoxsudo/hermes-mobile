@@ -7,6 +7,8 @@ import com.hermes.mobile.core.model.ChatCompletionRequest
 import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.model.chatRequestMessage
 import com.hermes.mobile.core.network.SseEvent
+import com.hermes.mobile.core.util.ReceivedAttachment
+import com.hermes.mobile.core.util.ReceivedAttachmentKind
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -239,6 +241,74 @@ class ChatStreamCoordinatorTest {
 
         assertEquals("remote-session-1", repository.savedSessions.last().id)
         coVerify { repository.repository.pushMessageToRemote("remote-session-1", "assistant", "Hello from remote", 2L) }
+    }
+
+    @Test
+    fun attachmentOnlyReplyPersistsAndPushesReadableRemoteMessage() = runTest(dispatcher) {
+        val attachment = ReceivedAttachment(
+            url = "https://cdn.example.com/report.pdf",
+            label = "Report.pdf",
+            kind = ReceivedAttachmentKind.File,
+            mimeType = "application/pdf",
+        )
+        val repository = mockRepository(
+            events = flowOf(
+                SseEvent.Opened(null),
+                SseEvent.Attachment(attachment),
+                SseEvent.Done,
+            ),
+        )
+        val coordinator = ChatStreamCoordinator(repository.repository)
+
+        coordinator.start(
+            streamCommand(
+                request = ChatCompletionRequest(messages = listOf(chatRequestMessage("user", "Hello"))),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals("[]", repository.savedMessages.last { it.role == "assistant" }.imageUrisJson)
+        assertEquals("Report.pdf", repository.savedSessions.last().lastMessagePreview)
+        coVerify {
+            repository.repository.pushMessageToRemote(
+                "session-1",
+                "assistant",
+                match { it.contains("[Report.pdf](https://cdn.example.com/report.pdf)") },
+                2L,
+            )
+        }
+    }
+
+    @Test
+    fun streamedThinkTagsUpdateReasoningWithoutVisiblePlainText() = runTest(dispatcher) {
+        val events = Channel<SseEvent>(Channel.UNLIMITED)
+        val repository = mockRepository(events = events.receiveAsFlow())
+        val coordinator = ChatStreamCoordinator(repository.repository)
+
+        coordinator.start(
+            streamCommand(
+                request = ChatCompletionRequest(messages = listOf(chatRequestMessage("user", "Hello"))),
+            ),
+        )
+
+        events.send(SseEvent.Opened(null))
+        events.send(SseEvent.Delta("<think>Check cache"))
+        runCurrent()
+
+        assertEquals("", coordinator.streams.value["session-1"]?.content)
+        assertEquals("Check cache", coordinator.streams.value["session-1"]?.reasoning)
+
+        events.send(SseEvent.Delta("</think>Restored."))
+        runCurrent()
+
+        assertEquals("Restored.", coordinator.streams.value["session-1"]?.content)
+        assertEquals("Check cache", coordinator.streams.value["session-1"]?.reasoning)
+        assertEquals("Restored.", repository.savedMessages.last { it.role == "assistant" }.content)
+        assertEquals("Check cache", repository.savedMessages.last { it.role == "assistant" }.reasoning)
+
+        events.send(SseEvent.Done)
+        events.close()
+        advanceUntilIdle()
     }
 
     private fun mockRepository(

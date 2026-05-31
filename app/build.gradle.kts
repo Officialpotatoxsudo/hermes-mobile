@@ -119,6 +119,10 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
 
+    // Liquid Glass UI lab
+    implementation(libs.kyant.backdrop)
+    implementation(libs.qm.liquidglass)
+
     // Testing
     testImplementation(libs.mockk.android)
     testImplementation(libs.junit.jupiter.api)

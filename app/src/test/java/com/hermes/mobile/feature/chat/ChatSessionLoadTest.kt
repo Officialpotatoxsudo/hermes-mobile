@@ -200,6 +200,7 @@ class ChatSessionLoadTest {
                 mapOf(
                     "sessionId" to "stale-local-session",
                     "activeSessionId" to "remote-session-1",
+                    "resolvedFromSessionId" to "stale-local-session",
                 ),
             ),
             repository = repository,
@@ -211,6 +212,42 @@ class ChatSessionLoadTest {
         assertEquals("remote-session-1", viewModel.uiState.value.sessionId)
         assertEquals(listOf("resolved"), viewModel.uiState.value.messages.map { it.content })
         coVerify(exactly = 0) { repository.syncMessages("stale-local-session") }
+    }
+
+    @Test
+    fun explicitRouteSessionWinsOverUnrelatedSavedActiveSession() = runTest(dispatcher) {
+        val repository = mockk<HermesRepository>()
+        val context = mockk<Context>(relaxed = true)
+
+        coEvery { repository.fetchModelOptions() } returns Result.success(DashboardModelOptionsResponse())
+        coEvery { repository.syncMessages("session-b") } returns Result.success(Unit)
+        coEvery { repository.cachedMessages("session-b") } returns listOf(
+            MessageEntity(
+                id = 1L,
+                sessionId = "session-b",
+                role = "user",
+                content = "selected",
+                timestamp = 1L,
+            ),
+        )
+        every { repository.messages("session-b") } returns flowOf(emptyList())
+
+        val viewModel = ChatViewModel(
+            savedStateHandle = SavedStateHandle(
+                mapOf(
+                    "sessionId" to "session-b",
+                    "activeSessionId" to "session-a",
+                ),
+            ),
+            repository = repository,
+            appPreferences = appPreferences(),
+            appContext = context,
+        )
+        advanceUntilIdle()
+
+        assertEquals("session-b", viewModel.uiState.value.sessionId)
+        assertEquals(listOf("selected"), viewModel.uiState.value.messages.map { it.content })
+        coVerify(exactly = 0) { repository.syncMessages("session-a") }
     }
 
     @Test

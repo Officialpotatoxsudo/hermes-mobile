@@ -59,7 +59,7 @@ class TokenStore @Inject constructor(
     val apiKey: String
         get() = cachedConnection.apiKey
 
-    fun hasCredentials(): Boolean = hasSavedConnection(serverUrl)
+    fun hasCredentials(): Boolean = hasSavedConnection(serverUrl, apiKey)
 
     suspend fun savedConnectionOnce(): SavedConnection {
         return savedConnection.first()
@@ -127,12 +127,16 @@ class TokenStore @Inject constructor(
     }
 }
 
-internal fun hasSavedConnection(serverUrl: String): Boolean = serverUrl.cleanSavedCredentialLine().isNotBlank()
+internal fun hasSavedConnection(serverUrl: String, apiKey: String): Boolean {
+    return serverUrl.cleanSavedCredentialLine().isNotBlank() &&
+        apiKey.cleanSavedCredentialLine().isNotBlank()
+}
 
 internal fun connectionIdentityFor(serverUrl: String, apiKey: String): String {
-    val normalizedServerUrl = serverUrl.cleanSavedCredentialLine()
-    if (normalizedServerUrl.isBlank()) return ""
-    return sha256Hex("$normalizedServerUrl\n${sha256Hex(apiKey.cleanSavedCredentialLine())}")
+    if (serverUrl.cleanSavedCredentialLine().isBlank()) return ""
+    val cleanApiKey = apiKey.cleanSavedCredentialLine()
+    if (cleanApiKey.isBlank()) return ""
+    return "agent:${sha256Hex(cleanApiKey)}"
 }
 
 internal fun String.cleanSavedCredentialLine(): String {

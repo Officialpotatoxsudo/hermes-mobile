@@ -46,6 +46,7 @@ data class AgentProfile(
     val subtitle: String,
     val initial: String,
     val avatarUri: String? = null,
+    val instructions: String = "",
 )
 
 @Singleton
@@ -53,6 +54,8 @@ class AppPreferences @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     private val themeKey = stringPreferencesKey("theme_mode")
+    private val visualStyleKey = stringPreferencesKey("visual_style")
+    private val liquidGlassConfigKey = stringPreferencesKey("liquid_glass_config")
     private val appLockEnabledKey = booleanPreferencesKey("app_lock_enabled")
     private val lockTimeoutKey = stringPreferencesKey("lock_timeout")
     private val hideChatPreviewsKey = booleanPreferencesKey("hide_chat_previews")
@@ -63,6 +66,20 @@ class AppPreferences @Inject constructor(
     val themeMode: Flow<ThemeMode> = context.appPreferencesDataStore.data.map { prefs ->
         runCatching { ThemeMode.valueOf(prefs[themeKey] ?: ThemeMode.System.name) }
             .getOrDefault(ThemeMode.System)
+    }
+
+    val visualStyle: Flow<VisualStyle> = context.appPreferencesDataStore.data.map { prefs ->
+        runCatching { VisualStyle.valueOf(prefs[visualStyleKey] ?: VisualStyle.Normal.name) }
+            .getOrDefault(VisualStyle.Normal)
+    }
+
+    val liquidGlassConfig: Flow<LiquidGlassConfig> = context.appPreferencesDataStore.data.map { prefs ->
+        runCatching {
+            prefs[liquidGlassConfigKey]
+                ?.takeIf { it.isNotBlank() }
+                ?.let { json.decodeFromString<LiquidGlassConfig>(it) }
+                ?: LiquidGlassConfig()
+        }.getOrDefault(LiquidGlassConfig()).coerced()
     }
 
     val lockTimeout: Flow<LockTimeout> = context.appPreferencesDataStore.data.map { prefs ->
@@ -100,6 +117,24 @@ class AppPreferences @Inject constructor(
         }
     }
 
+    suspend fun setVisualStyle(style: VisualStyle) {
+        context.appPreferencesDataStore.edit { prefs ->
+            prefs[visualStyleKey] = style.name
+        }
+    }
+
+    suspend fun setLiquidGlassConfig(config: LiquidGlassConfig) {
+        context.appPreferencesDataStore.edit { prefs ->
+            prefs[liquidGlassConfigKey] = json.encodeToString(config.coerced())
+        }
+    }
+
+    suspend fun resetLiquidGlassConfig() {
+        context.appPreferencesDataStore.edit { prefs ->
+            prefs.remove(liquidGlassConfigKey)
+        }
+    }
+
     suspend fun setLockTimeout(timeout: LockTimeout) {
         context.appPreferencesDataStore.edit { prefs ->
             prefs[lockTimeoutKey] = timeout.name
@@ -132,11 +167,12 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    suspend fun addAgent(name: String, subtitle: String) {
+    suspend fun addAgent(name: String, subtitle: String, instructions: String = "") {
         val agent = buildCustomAgentProfile(
             id = newCustomAgentId(),
             name = name,
             subtitle = subtitle,
+            instructions = instructions,
         ) ?: return
         context.appPreferencesDataStore.edit { prefs ->
             val current = runCatching {
@@ -146,8 +182,8 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    suspend fun updateAgent(id: String, name: String, subtitle: String, avatarUri: String? = null) {
-        val agent = buildCustomAgentProfile(id, name, subtitle, avatarUri) ?: return
+    suspend fun updateAgent(id: String, name: String, subtitle: String, avatarUri: String? = null, instructions: String = "") {
+        val agent = buildCustomAgentProfile(id, name, subtitle, avatarUri, instructions) ?: return
         context.appPreferencesDataStore.edit { prefs ->
             val current = runCatching {
                 json.decodeFromString<List<AgentProfile>>(prefs[agentsKey].orEmpty())

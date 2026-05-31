@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.hermes.mobile.core.settings.HermesGlassRole
 
 @Composable
 fun HermesCircleButton(
@@ -68,11 +69,11 @@ fun HermesCircleButton(
             modifier
                 .size(size)
                 .minimumInteractiveComponentSize()
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
+                .hermesGlass(
                     shape = CircleShape,
-                    containerAlpha = 0.72f,
-                    borderAlpha = 0.18f,
+                    role = HermesGlassRole.Action,
+                    normalContainerAlpha = 0.72f,
+                    normalBorderAlpha = 0.18f,
                 )
         } else {
             modifier

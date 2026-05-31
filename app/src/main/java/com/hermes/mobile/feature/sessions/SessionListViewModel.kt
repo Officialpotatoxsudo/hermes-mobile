@@ -81,15 +81,15 @@ class SessionListViewModel @Inject constructor(
         }
     }
 
-    fun addAgent(name: String, subtitle: String) {
+    fun addAgent(name: String, subtitle: String, instructions: String = "") {
         viewModelScope.launch {
-            appPreferences.addAgent(name, subtitle)
+            appPreferences.addAgent(name, subtitle, instructions)
         }
     }
 
-    fun updateAgent(id: String, name: String, subtitle: String) {
+    fun updateAgent(id: String, name: String, subtitle: String, instructions: String = "") {
         viewModelScope.launch {
-            appPreferences.updateAgent(id, name, subtitle)
+            appPreferences.updateAgent(id, name, subtitle, instructions = instructions)
         }
     }
 
@@ -103,7 +103,11 @@ class SessionListViewModel @Inject constructor(
 internal fun filterSessionsForAgent(sessions: List<SessionEntity>, agentId: String?): List<SessionEntity> {
     val cleanAgentId = agentId.cleanRouteFilter()
     if (cleanAgentId == null) return sessions
-    return sessions.filter { session -> agentIdFromChatSessionId(session.id) == cleanAgentId }
+    val defaultAgentId = AppPreferences.defaultAgents.first().id
+    return sessions.filter { session ->
+        val sessionAgentId = agentIdFromChatSessionId(session.id)
+        sessionAgentId == cleanAgentId || (cleanAgentId == defaultAgentId && sessionAgentId == null)
+    }
 }
 
 private fun SavedStateHandle.cleanString(key: String): String? {

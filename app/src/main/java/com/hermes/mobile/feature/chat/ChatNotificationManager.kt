@@ -38,19 +38,25 @@ class ChatNotificationManager @Inject constructor(
         if (!canPostNotifications()) return
         ensureChatNotificationChannels(context)
         val preview = content.firstReadableNotificationLine() ?: "Hermes finished replying."
-        NotificationManagerCompat.from(context).notify(
-            sessionId.notificationId(),
-            chatReplyNotification(context, sessionId, preview),
-        )
+        try {
+            NotificationManagerCompat.from(context).notify(
+                sessionId.notificationId(),
+                chatReplyNotification(context, sessionId, preview),
+            )
+        } catch (_: SecurityException) {
+        }
     }
 
     fun notifyFailure(sessionId: String, readable: String) {
         if (!canPostNotifications()) return
         ensureChatNotificationChannels(context)
-        NotificationManagerCompat.from(context).notify(
-            sessionId.notificationId(),
-            chatFailureNotification(context, sessionId, readable),
-        )
+        try {
+            NotificationManagerCompat.from(context).notify(
+                sessionId.notificationId(),
+                chatFailureNotification(context, sessionId, readable),
+            )
+        } catch (_: SecurityException) {
+        }
     }
 
     private fun canPostNotifications(): Boolean {
@@ -93,11 +99,7 @@ class ChatStreamForegroundService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, ChatStreamForegroundService::class.java).setAction(ACTION_START)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(intent)
         }
 
         fun stop(context: Context) {
@@ -147,7 +149,6 @@ private fun chatFailureNotification(context: Context, sessionId: String, readabl
 }
 
 private fun ensureChatNotificationChannels(context: Context) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(
         NotificationChannel(

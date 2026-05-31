@@ -32,8 +32,12 @@ data class MessageEntity(
     val content: String,
     @ColumnInfo(name = "timestamp")
     val timestamp: Long,
+    @ColumnInfo(name = "reasoning")
+    val reasoning: String = "",
     @ColumnInfo(name = "image_uris_json")
     val imageUrisJson: String = "[]",
+    @ColumnInfo(name = "received_attachments_json")
+    val receivedAttachmentsJson: String = "[]",
     @ColumnInfo(name = "account_scope")
     val accountScope: String = LEGACY_ACCOUNT_SCOPE,
     @ColumnInfo(name = "remote_backed")

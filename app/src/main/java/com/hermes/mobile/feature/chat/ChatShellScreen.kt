@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,9 +92,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +106,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -116,6 +120,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -147,9 +152,10 @@ import com.hermes.mobile.core.network.ConnectionState
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
 import com.hermes.mobile.core.util.ReceivedAttachment
 import com.hermes.mobile.core.util.ReceivedAttachmentKind
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.core.settings.HermesGlassRole
 import com.hermes.mobile.ui.components.HermesCircleButton
 import com.hermes.mobile.ui.components.MediaThumbnail
+import com.hermes.mobile.ui.components.hermesGlass
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.LottieConstants
@@ -229,6 +235,7 @@ internal fun chatBubbleMaxWidth(availableWidth: Dp, isOutgoing: Boolean): Dp {
 @Composable
 fun ChatShellScreen(
     onHistoryClick: (String?) -> Unit,
+    onBack: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -238,8 +245,17 @@ fun ChatShellScreen(
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
+    var recordingLevel by remember { mutableFloatStateOf(0.04f) }
     var pendingDeleteMessage by remember { mutableStateOf<ChatUiMessage?>(null) }
     var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    BackHandler {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        onBack()
+    }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
@@ -292,12 +308,14 @@ fun ChatShellScreen(
                 recordingFile = result.file
                 isRecording = true
                 recordingStartedAt = System.currentTimeMillis()
+                recordingLevel = 0.04f
             }
             .onFailure {
                 recorder = null
                 recordingFile = null
                 isRecording = false
                 recordingStartedAt = 0L
+                recordingLevel = 0.04f
                 Toast.makeText(context, "Could not start voice recording", Toast.LENGTH_SHORT).show()
             }
     }
@@ -318,22 +336,48 @@ fun ChatShellScreen(
     }
     fun finishRecording() {
         if (!isRecording) return
+        val elapsedMillis = (System.currentTimeMillis() - recordingStartedAt).coerceAtLeast(0L)
         val file = stopVoiceRecording(recorder, recordingFile)
         recorder = null
         recordingFile = null
         isRecording = false
         recordingStartedAt = 0L
+        recordingLevel = 0.04f
         if (file != null) {
             viewModel.addVoiceRecording(
                 uri = Uri.fromFile(file).toString(),
-                label = file.name,
+                label = voiceRecordingLabel(elapsedMillis),
             )
         }
     }
 
-    DisposableEffect(recorder, recordingFile) {
+    fun cancelRecording() {
+        if (!isRecording) return
+        stopVoiceRecording(recorder, recordingFile)?.delete()
+        recorder = null
+        recordingFile = null
+        isRecording = false
+        recordingStartedAt = 0L
+        recordingLevel = 0.04f
+    }
+
+    val latestRecorder by rememberUpdatedState(recorder)
+    val latestRecordingFile by rememberUpdatedState(recordingFile)
+    val latestIsRecording by rememberUpdatedState(isRecording)
+    DisposableEffect(Unit) {
         onDispose {
-            stopVoiceRecording(recorder, recordingFile)?.delete()
+            if (latestIsRecording) {
+                stopVoiceRecording(latestRecorder, latestRecordingFile)?.delete()
+            }
+        }
+    }
+
+    LaunchedEffect(isRecording, recorder) {
+        while (isRecording) {
+            recordingLevel = recordingAmplitudeLevel(
+                runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0),
+            )
+            delay(80)
         }
     }
 
@@ -427,7 +471,7 @@ fun ChatShellScreen(
                             top = topPadding,
                             bottom = bottomPadding,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (state.pinnedMessageIds.isNotEmpty()) {
                             item {
@@ -464,8 +508,10 @@ fun ChatShellScreen(
                             )
                         }
                         item {
+                            val showThinkingIndicator = state.isConnecting ||
+                                (state.tools.isNotEmpty() && state.messages.none { it.role == "assistant" && it.isStreaming && it.visibleContent().isNotBlank() })
                             AnimatedVisibility(
-                                visible = state.isConnecting || state.isStreaming,
+                                visible = showThinkingIndicator,
                                 enter = fadeIn() + slideInVertically { it / 2 },
                                 exit = fadeOut() + slideOutVertically { it / 2 },
                             ) {
@@ -516,9 +562,6 @@ fun ChatShellScreen(
                         onNewChat = viewModel::startNewChat,
                         onSwitchAgent = viewModel::switchAgent,
                         onSearchClick = viewModel::openSearch,
-                        onExportMarkdown = { shareExport(context, viewModel.exportConversation(ExportFormat.Markdown), "md") },
-                        onExportPlainText = { shareExport(context, viewModel.exportConversation(ExportFormat.PlainText), "txt") },
-                        onExportJson = { shareExport(context, viewModel.exportConversation(ExportFormat.Json), "json") },
                     )
                 }
             }
@@ -560,8 +603,10 @@ fun ChatShellScreen(
                     onFiles = { fileLauncher.launch(arrayOf("*/*")) },
                     onVoiceStart = ::beginRecording,
                     onVoiceEnd = ::finishRecording,
+                    onVoiceCancel = ::cancelRecording,
                     isRecording = isRecording,
                     recordingStartedAtMillis = recordingStartedAt,
+                    recordingLevel = recordingLevel,
                     onCommand = viewModel::insertCommand,
                     onRemoveAttachment = viewModel::removeAttachment,
                     replyTarget = state.replyTarget,
@@ -618,9 +663,6 @@ private fun ChatTopBar(
     onNewChat: () -> Unit,
     onSwitchAgent: (String) -> Unit,
     onSearchClick: () -> Unit,
-    onExportMarkdown: () -> Unit,
-    onExportPlainText: () -> Unit,
-    onExportJson: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var agentPickerOpen by remember { mutableStateOf(false) }
@@ -780,31 +822,6 @@ private fun ChatTopBar(
                 leadingIcon = { Icon(Icons.Rounded.Menu, contentDescription = "Chat history") },
                 onClick = {
                     onHistoryClick(agentIdFromChatSessionId(sessionId))
-                    menuOpen = false
-                },
-            )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            DropdownMenuItem(
-                text = { Text("Export as Markdown") },
-                leadingIcon = { Icon(Icons.Rounded.Description, contentDescription = null) },
-                onClick = {
-                    onExportMarkdown()
-                    menuOpen = false
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Export as Plain Text") },
-                leadingIcon = { Icon(Icons.Rounded.Description, contentDescription = null) },
-                onClick = {
-                    onExportPlainText()
-                    menuOpen = false
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Export as JSON") },
-                leadingIcon = { Icon(Icons.Rounded.Code, contentDescription = null) },
-                onClick = {
-                    onExportJson()
                     menuOpen = false
                 },
             )
@@ -970,11 +987,11 @@ private fun InitialLoadingState(modifier: Modifier = Modifier) {
     ) {
         Box(
             modifier = Modifier
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
+                .hermesGlass(
                     shape = RoundedCornerShape(22.dp),
-                    containerAlpha = 0.68f,
-                    borderAlpha = 0.14f,
+                    role = HermesGlassRole.Status,
+                    normalContainerAlpha = 0.68f,
+                    normalBorderAlpha = 0.14f,
                 )
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         ) {
@@ -1207,7 +1224,7 @@ private fun MessageBubble(
                             menuOpen = true
                         },
                     )
-                    .padding(horizontal = 13.dp, vertical = 9.dp),
+                    .padding(horizontal = 11.dp, vertical = 7.dp),
             )
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1366,7 +1383,7 @@ private fun AssistantMessageRow(
                         Modifier
                     },
                 )
-                .padding(start = 4.dp, end = 22.dp, top = 10.dp, bottom = 12.dp),
+                .padding(start = 4.dp, end = 18.dp, top = 2.dp, bottom = 4.dp),
         ) {
             if (message.replyTo != null) {
                 Text(
@@ -1413,12 +1430,16 @@ private fun AssistantMessageRow(
                 }
             }
             if (isPinned || message.responseTime != null || (message.isStreaming && visibleContent.isNotBlank())) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(5.dp))
             }
+            ReasoningPanel(
+                reasoning = message.reasoningContent(),
+                modifier = Modifier.padding(bottom = if (visibleContent.isNotBlank() || message.receivedAttachments.isNotEmpty()) 6.dp else 0.dp),
+            )
             ReceivedAttachments(
                 attachments = message.receivedAttachments,
                 toneColor = textColor,
-                modifier = Modifier.padding(bottom = if (visibleContent.isNotBlank()) 8.dp else 0.dp),
+                modifier = Modifier.padding(bottom = if (visibleContent.isNotBlank()) 6.dp else 0.dp),
             )
             if (visibleContent.isNotBlank()) {
                 RichMessageText(visibleContent, textColor, searchQuery)
@@ -1449,7 +1470,7 @@ private fun AssistantMessageRow(
                 )
             }
             Row(
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -1477,6 +1498,63 @@ private fun AssistantMessageRow(
             onEdit = null,
             onDelete = onDelete,
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReasoningPanel(
+    reasoning: String,
+    modifier: Modifier = Modifier,
+) {
+    if (reasoning.isBlank()) return
+    var expanded by remember(reasoning) { mutableStateOf(false) }
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape)
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .animateContentSize(),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Rounded.Psychology,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "Reasoning",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Rounded.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide reasoning" else "Show reasoning",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(animationSpec = tween(160)) + slideInVertically { -it / 3 },
+            exit = fadeOut(animationSpec = tween(120)) + slideOutVertically { -it / 3 },
+        ) {
+            Text(
+                reasoning,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
     }
 }
 
@@ -2595,8 +2673,10 @@ private fun Composer(
     onFiles: () -> Unit,
     onVoiceStart: () -> Unit,
     onVoiceEnd: () -> Unit,
+    onVoiceCancel: () -> Unit,
     isRecording: Boolean,
     recordingStartedAtMillis: Long,
+    recordingLevel: Float,
     onCommand: (String) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     replyTarget: ChatUiMessage?,
@@ -2616,11 +2696,15 @@ private fun Composer(
         auxiliaryAttachments.isNotEmpty()
     val actionBackground = if (canSend) {
         MaterialTheme.colorScheme.primary
+    } else if (isRecording) {
+        MaterialTheme.colorScheme.error
     } else {
         MaterialTheme.colorScheme.primaryContainer
     }
     val actionTint = if (canSend) {
         MaterialTheme.colorScheme.onPrimary
+    } else if (isRecording) {
+        MaterialTheme.colorScheme.onError
     } else {
         MaterialTheme.colorScheme.primary
     }
@@ -2662,7 +2746,12 @@ private fun Composer(
                 enter = fadeIn(),
                 exit = fadeOut(),
             ) {
-                RecordingStrip(startedAtMillis = recordingStartedAtMillis)
+                RecordingStrip(
+                    startedAtMillis = recordingStartedAtMillis,
+                    level = recordingLevel,
+                    onCancel = onVoiceCancel,
+                    onAttach = onVoiceEnd,
+                )
             }
             AttachmentTray(
                 mediaAttachments = mediaAttachments,
@@ -2733,7 +2822,11 @@ private fun Composer(
                     label = "sendPulse",
                     finishedListener = { sendPulse = false },
                 )
-                val actionDescription = if (canSend) "Send" else "Hold to record"
+                val actionDescription = when {
+                    canSend -> "Send"
+                    isRecording -> "Attach voice recording"
+                    else -> "Record voice"
+                }
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -2753,16 +2846,13 @@ private fun Composer(
                                     onSend()
                                 }
                             } else {
-                                Modifier.pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onPress = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onVoiceStart()
-                                            tryAwaitRelease()
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onVoiceEnd()
-                                        },
-                                    )
+                                Modifier.clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (isRecording) {
+                                        onVoiceEnd()
+                                    } else {
+                                        onVoiceStart()
+                                    }
                                 }
                             },
                         ),
@@ -2870,14 +2960,23 @@ private fun AttachmentTray(
                 .padding(top = 8.dp, bottom = 2.dp),
         ) {
             auxiliaryAttachments.take(3).forEach { attachment ->
-                AttachmentChip(attachment, onRemove = { onRemoveAttachment(attachment.id) })
+                if (attachment.kind == "voice") {
+                    VoiceAttachmentChip(attachment, onRemove = { onRemoveAttachment(attachment.id) })
+                } else {
+                    AttachmentChip(attachment, onRemove = { onRemoveAttachment(attachment.id) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun RecordingStrip(startedAtMillis: Long) {
+private fun RecordingStrip(
+    startedAtMillis: Long,
+    level: Float,
+    onCancel: () -> Unit,
+    onAttach: () -> Unit,
+) {
     val transition = rememberInfiniteTransition(label = "recordingMotion")
     val pulse by transition.animateFloat(
         initialValue = 0.9f,
@@ -2888,7 +2987,7 @@ private fun RecordingStrip(startedAtMillis: Long) {
         ),
         label = "recordPulseScale",
     )
-    val wave by transition.animateFloat(
+    val motion by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -2906,6 +3005,7 @@ private fun RecordingStrip(startedAtMillis: Long) {
     }
     val elapsed = "%d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60)
     val tone = MaterialTheme.colorScheme.error
+    val visualLevel = (level * 0.78f + motion * 0.22f).coerceIn(0.04f, 1f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2934,18 +3034,28 @@ private fun RecordingStrip(startedAtMillis: Long) {
                 color = tone,
             )
             Text(
-                "Release to attach",
+                "Sound-reactive voice note",
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        RecordingWaveform(level = wave, color = tone, modifier = Modifier.size(58.dp, 28.dp))
+        RecordingWaveform(level = visualLevel, color = tone, modifier = Modifier.size(68.dp, 30.dp))
         Spacer(Modifier.width(10.dp))
-        Text(
-            elapsed,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-            color = tone,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                elapsed,
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = tone,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(onClick = onCancel) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = onAttach) {
+                    Text("Attach", color = tone, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 
@@ -2957,7 +3067,7 @@ private fun RecordingWaveform(level: Float, color: Color, modifier: Modifier = M
         val stroke = gap.coerceAtLeast(3f)
         repeat(bars) { index ->
             val phase = ((index % 3) * 0.18f + level).coerceIn(0f, 1f)
-            val heightFactor = 0.28f + (abs(sin((phase + index * 0.21f) * Math.PI).toFloat()) * 0.68f)
+            val heightFactor = 0.16f + (abs(sin((phase + index * 0.21f) * Math.PI).toFloat()) * (0.2f + level * 0.64f))
             val barHeight = size.height * heightFactor
             val x = gap + index * gap * 2f
             drawLine(
@@ -3009,11 +3119,11 @@ private fun CommandBar(query: String, selectedModel: ChatModelOption, onCommand:
             .fillMaxWidth()
             .heightIn(max = 260.dp)
             .padding(bottom = 8.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
+            .hermesGlass(
                 shape = RoundedCornerShape(28.dp),
-                containerAlpha = 0.82f,
-                borderAlpha = 0.18f,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.82f,
+                normalBorderAlpha = 0.18f,
             ),
         contentPadding = PaddingValues(vertical = 6.dp),
     ) {
@@ -3094,6 +3204,52 @@ private fun AttachmentChip(attachment: ChatAttachment, onRemove: () -> Unit) {
 }
 
 @Composable
+private fun VoiceAttachmentChip(attachment: ChatAttachment, onRemove: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .widthIn(min = 190.dp, max = 260.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
+            .padding(start = 10.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Mic,
+                contentDescription = "Voice attachment",
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Spacer(Modifier.width(9.dp))
+        RecordingWaveform(
+            level = 0.58f,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(44.dp, 22.dp),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            attachment.label.ifBlank { "Voice note" },
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Rounded.Close, contentDescription = "Remove voice note", modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+@Composable
 private fun Dot(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
@@ -3168,11 +3324,26 @@ private fun String.cleanMediaFileSegment(allowDash: Boolean, fallback: String): 
 
 private fun stopVoiceRecording(recorder: MediaRecorder?, file: File?): File? {
     if (recorder == null || file == null) return null
-    return runCatching {
+    val recorded = runCatching {
         recorder.stop()
-        recorder.release()
         file.takeIf { it.exists() && it.length() > 0L }
     }.getOrNull()
+    runCatching { recorder.release() }
+    if (recorded == null) {
+        runCatching { file.delete() }
+    }
+    return recorded
+}
+
+internal fun voiceRecordingLabel(elapsedMillis: Long): String {
+    val totalSeconds = (elapsedMillis / 1_000L).coerceAtLeast(0L)
+    return "Voice note ${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
+}
+
+internal fun recordingAmplitudeLevel(maxAmplitude: Int): Float {
+    val normalized = (maxAmplitude.coerceAtLeast(0) / 32_768f).coerceIn(0f, 1f)
+    val withFloor = normalized.coerceAtLeast(0.04f)
+    return (withFloor * 100f).roundToInt() / 100f
 }
 
 private fun persistPickedPhotoAccess(context: Context, uri: Uri) {
@@ -3223,7 +3394,8 @@ private fun highlightSearchMatches(text: AnnotatedString, query: String, baseCol
 }
 
 private fun shareExport(context: Context, content: String, extension: String) {
-    val file = File(context.cacheDir, "hermes-export.$extension")
+    val directory = File(context.cacheDir, HERMES_SHARE_DIRECTORY).apply { mkdirs() }
+    val file = File(directory, "hermes-export.$extension")
     file.writeText(content)
     val uri = FileProvider.getUriForFile(
         context,
@@ -3295,4 +3467,6 @@ private fun ReceivedAttachment.safeDownloadFileName(): String {
 }
 
 private const val HERMES_MEDIA_DIRECTORY = "hermes-media"
+private const val HERMES_SHARE_DIRECTORY = "hermes-share"
 private val safeDownloadFileNameChars = setOf('.', '-', '_', ' ')
+

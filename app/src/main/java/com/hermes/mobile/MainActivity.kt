@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -22,8 +23,11 @@ import kotlinx.coroutines.flow.map
 import com.hermes.mobile.core.auth.AppLockManager
 import com.hermes.mobile.core.auth.SavedConnection
 import com.hermes.mobile.core.auth.TokenStore
+import com.hermes.mobile.core.auth.hasSavedConnection
 import com.hermes.mobile.core.settings.AppPreferences
 import com.hermes.mobile.core.settings.ThemeMode
+import com.hermes.mobile.core.settings.LiquidGlassConfig
+import com.hermes.mobile.core.settings.VisualStyle
 import com.hermes.mobile.feature.chat.ChatStreamCoordinator
 import com.hermes.mobile.navigation.HermesNavGraph
 import com.hermes.mobile.ui.theme.HermesTheme
@@ -46,6 +50,8 @@ class MainActivity : FragmentActivity() {
         isUnlocked = appLockManager.isUnlocked
         setContent {
             val themeMode by appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.System)
+            val visualStyle by appPreferences.visualStyle.collectAsStateWithLifecycle(initialValue = VisualStyle.Normal)
+            val liquidGlassConfig by appPreferences.liquidGlassConfig.collectAsStateWithLifecycle(initialValue = LiquidGlassConfig())
             val appLockEnabled by appPreferences.appLockEnabled.collectAsStateWithLifecycle(initialValue = true)
             val lockTimeout by appPreferences.lockTimeout.collectAsStateWithLifecycle(
                 initialValue = com.hermes.mobile.core.settings.LockTimeout.FiveMinutes,
@@ -54,17 +60,23 @@ class MainActivity : FragmentActivity() {
             val savedConnection by tokenStore.savedConnection
                 .map<SavedConnection, SavedConnection?> { it }
                 .collectAsStateWithLifecycle(initialValue = null)
-            appLockManager.setEnabled(appLockEnabled)
-            appLockManager.setLockTimeout(lockTimeout.millis)
-            HermesTheme(themeMode = themeMode) {
+            SideEffect {
+                appLockManager.setEnabled(appLockEnabled)
+                appLockManager.setLockTimeout(lockTimeout.millis)
+            }
+            HermesTheme(
+                themeMode = themeMode,
+                visualStyle = visualStyle,
+                liquidGlassConfig = liquidGlassConfig,
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
+                    color = androidx.compose.ui.graphics.Color.Transparent,
                 ) {
                     Box {
                         HermesNavGraph(
                             connectionLoaded = savedConnection != null,
-                            hasCredentials = savedConnection?.serverUrl?.isNotBlank() == true,
+                            hasCredentials = savedConnection?.let { hasSavedConnection(it.serverUrl, it.apiKey) } == true,
                             appLockEnabled = appLockEnabled,
                             isUnlocked = !appLockEnabled || isUnlocked,
                             lastOpenedChatSessionId = lastOpenedChatSessionId,

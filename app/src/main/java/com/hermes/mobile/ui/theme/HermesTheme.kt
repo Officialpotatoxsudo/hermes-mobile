@@ -10,10 +10,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.TextStyle
@@ -21,7 +23,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Typography
+import com.hermes.mobile.core.settings.LiquidGlassConfig
 import com.hermes.mobile.core.settings.ThemeMode
+import com.hermes.mobile.core.settings.VisualStyle
+import com.hermes.mobile.ui.components.LocalHermesLiquidGlassConfig
+import com.hermes.mobile.ui.components.LocalHermesVisualStyle
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF2D5BDB),
@@ -198,103 +204,111 @@ private val PureWhiteColors = lightColorScheme(
     outlineVariant = Color(0xFFE5E5E5),
 )
 
+// Centralized font families. Using FontFamily.Default lets manufacturer-
+// customized system fonts (Samsung One UI Sans, OnePlus Sans, Pixel's Roboto Flex,
+// etc.) come through, instead of forcing the generic sans-serif fallback.
+// Swap these vals to a `GoogleFont` / bundled `Font(...)` family when adopting a
+// custom typeface (e.g. Inter, Nunito, DM Sans).
+private val HermesDisplayFontFamily: FontFamily = FontFamily.Default
+private val HermesBodyFontFamily: FontFamily = FontFamily.Default
+
 private val HermesTypography = Typography(
     displayLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 57.sp,
         lineHeight = 64.sp,
-        letterSpacing = (-0.25).sp,
+        letterSpacing = 0.sp,
     ),
     displayMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 45.sp,
         lineHeight = 52.sp,
     ),
     displaySmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 36.sp,
         lineHeight = 44.sp,
     ),
     headlineLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 32.sp,
         lineHeight = 40.sp,
-        letterSpacing = (-0.3).sp,
+        letterSpacing = 0.sp,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.SemiBold,
         fontSize = 28.sp,
         lineHeight = 34.sp,
-        letterSpacing = (-0.2).sp,
+        letterSpacing = 0.sp,
     ),
     headlineSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.SemiBold,
         fontSize = 24.sp,
         lineHeight = 32.sp,
     ),
     titleLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesDisplayFontFamily,
         fontWeight = FontWeight.SemiBold,
         fontSize = 22.sp,
         lineHeight = 28.sp,
     ),
     titleMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 24.sp,
         letterSpacing = 0.15.sp,
     ),
     titleSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.1.sp,
     ),
     bodyLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp,
         lineHeight = 24.sp,
         letterSpacing = 0.15.sp,
     ),
     bodyMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.25.sp,
     ),
     bodySmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Normal,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         letterSpacing = 0.4.sp,
     ),
     labelLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         letterSpacing = 0.1.sp,
     ),
     labelMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         letterSpacing = 0.5.sp,
     ),
     labelSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = HermesBodyFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         lineHeight = 16.sp,
@@ -305,6 +319,8 @@ private val HermesTypography = Typography(
 @Composable
 fun HermesTheme(
     themeMode: ThemeMode = ThemeMode.System,
+    visualStyle: VisualStyle = VisualStyle.Normal,
+    liquidGlassConfig: LiquidGlassConfig = LiquidGlassConfig(),
     content: @Composable () -> Unit,
 ) {
     val darkTheme = when (themeMode) {
@@ -337,27 +353,56 @@ fun HermesTheme(
             }
             onDispose { }
         }
-        val backgroundBrush = when (themeMode) {
-            ThemeMode.Sepia -> Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFF5EBDA)))
-            ThemeMode.Nord -> Brush.verticalGradient(listOf(Color(0xFF353C49), Color(0xFF2E3440)))
-            ThemeMode.Catppuccin -> Brush.verticalGradient(listOf(Color(0xFF24243A), Color(0xFF1E1E2E)))
-            ThemeMode.Light -> Brush.verticalGradient(listOf(Color(0xFFFBF8FF), Color(0xFFF0EDF8)))
-            ThemeMode.Dark -> Brush.verticalGradient(listOf(Color(0xFF181820), Color(0xFF121318)))
-            ThemeMode.PureBlack -> Brush.verticalGradient(listOf(Color.Black, Color.Black))
-            ThemeMode.PureWhite -> Brush.verticalGradient(listOf(Color(0xFFFCFCFA), Color(0xFFF5F5F0)))
-            ThemeMode.System -> if (darkTheme) {
-                Brush.verticalGradient(listOf(Color(0xFF181820), Color(0xFF121318)))
-            } else {
-                Brush.verticalGradient(listOf(Color(0xFFFBF8FF), Color(0xFFF0EDF8)))
+        val backgroundBrush = if (visualStyle == VisualStyle.LiquidGlass) {
+            liquidGlassBackgroundBrush(darkTheme)
+        } else {
+            when (themeMode) {
+                ThemeMode.Sepia -> Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFF5EBDA)))
+                ThemeMode.Nord -> Brush.verticalGradient(listOf(Color(0xFF353C49), Color(0xFF2E3440)))
+                ThemeMode.Catppuccin -> Brush.verticalGradient(listOf(Color(0xFF24243A), Color(0xFF1E1E2E)))
+                ThemeMode.Light -> Brush.verticalGradient(listOf(Color(0xFFFBF8FF), Color(0xFFF0EDF8)))
+                ThemeMode.Dark -> Brush.verticalGradient(listOf(Color(0xFF181820), Color(0xFF121318)))
+                ThemeMode.PureBlack -> SolidColor(Color.Black)
+                ThemeMode.PureWhite -> Brush.verticalGradient(listOf(Color(0xFFFCFCFA), Color(0xFFF5F5F0)))
+                ThemeMode.System -> if (darkTheme) {
+                    Brush.verticalGradient(listOf(Color(0xFF181820), Color(0xFF121318)))
+                } else {
+                    Brush.verticalGradient(listOf(Color(0xFFFBF8FF), Color(0xFFF0EDF8)))
+                }
             }
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(backgroundBrush),
+        CompositionLocalProvider(
+            LocalHermesVisualStyle provides visualStyle,
+            LocalHermesLiquidGlassConfig provides liquidGlassConfig.coerced(),
         ) {
-            content()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(backgroundBrush),
+            ) {
+                content()
+            }
         }
+    }
+}
+
+private fun liquidGlassBackgroundBrush(darkTheme: Boolean): Brush {
+    return if (darkTheme) {
+        Brush.verticalGradient(
+            listOf(
+                Color(0xFF10131A),
+                Color(0xFF172018),
+                Color(0xFF111521),
+            ),
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                Color(0xFFF9FBFF),
+                Color(0xFFEFF8F3),
+                Color(0xFFF8F2FF),
+            ),
+        )
     }
 }

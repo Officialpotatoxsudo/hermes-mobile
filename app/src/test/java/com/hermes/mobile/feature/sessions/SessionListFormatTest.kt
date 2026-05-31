@@ -99,6 +99,10 @@ class SessionListFormatTest {
             listOf("agent-chat-research--2"),
             filterSessionsForAgent(sessions, " research ").map { it.id },
         )
+        assertEquals(
+            listOf("agent-chat-hermes--1", "plain-session"),
+            filterSessionsForAgent(sessions, " hermes ").map { it.id },
+        )
         assertEquals(sessions.map { it.id }, filterSessionsForAgent(sessions, "   ").map { it.id })
     }
 

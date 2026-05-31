@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SessionEntity::class, MessageEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class HermesDatabase : RoomDatabase() {
@@ -140,6 +140,13 @@ abstract class HermesDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_account_scope_session_id ON messages(account_scope, session_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_account_scope_timestamp ON messages(account_scope, timestamp)")
                 db.execSQL("PRAGMA foreign_keys=ON")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE messages ADD COLUMN received_attachments_json TEXT NOT NULL DEFAULT '[]'")
             }
         }
     }

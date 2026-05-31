@@ -98,6 +98,17 @@ class EndpointTest {
     }
 
     @Test
+    fun mobileClientHeadersFlagRequestsAsMobileApp() {
+        val request = Request.Builder()
+            .url("https://agent.example/v1/chat/completions")
+            .applyHermesMobileClientHeaders()
+            .build()
+
+        assertEquals("mobile_app", request.header("X-Hermes-Client-Platform"))
+        assertEquals("mobile_app", request.header("X-Hermes-Source"))
+    }
+
+    @Test
     fun sessionKeyIsNotSentWithoutApiKey() {
         val request = Request.Builder()
             .url("https://agent.example/v1/chat/completions")

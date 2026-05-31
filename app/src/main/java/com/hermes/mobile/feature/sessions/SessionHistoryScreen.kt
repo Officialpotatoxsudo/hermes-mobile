@@ -49,8 +49,11 @@ import com.hermes.mobile.core.util.receivedAttachmentsFromMessage
 import com.hermes.mobile.core.util.visibleMessageText
 import com.hermes.mobile.core.util.visibleReceivedAttachmentText
 import com.hermes.mobile.feature.chat.ReceivedAttachments
+import com.hermes.mobile.core.settings.HermesGlassRole
 import com.hermes.mobile.ui.components.HermesHeader
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.ui.components.LocalHermesVisualStyle
+import com.hermes.mobile.ui.components.hermesGlass
+import com.hermes.mobile.core.settings.VisualStyle
 import kotlinx.coroutines.delay
 
 @Composable
@@ -128,6 +131,8 @@ fun SessionHistoryScreen(
 @OptIn(ExperimentalLayoutApi::class)
 private fun HistoryBubble(message: MessageEntity) {
     val outgoing = message.role == "user"
+    val liquidGlassEnabled = LocalHermesVisualStyle.current == VisualStyle.LiquidGlass
+    val bubbleShape = RoundedCornerShape(22.dp)
     val imageUris = remember(message.imageUrisJson, message.content) {
         messageImageUrisFromJson(message.imageUrisJson)
             .ifEmpty { legacyImageUrisFromText(message.content) }
@@ -143,16 +148,16 @@ private fun HistoryBubble(message: MessageEntity) {
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.84f)
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
-                    shape = RoundedCornerShape(22.dp),
-                    containerAlpha = if (outgoing) 0.85f else 0.65f,
-                    borderAlpha = 0.14f,
+                .hermesGlass(
+                    shape = bubbleShape,
+                    role = HermesGlassRole.ChatBubble,
+                    normalContainerAlpha = if (outgoing) 0.85f else 0.65f,
+                    normalBorderAlpha = 0.14f,
                 )
                 .then(
-                    if (outgoing) Modifier.background(
+                    if (outgoing && !liquidGlassEnabled) Modifier.background(
                         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                        RoundedCornerShape(22.dp),
+                        bubbleShape,
                     ) else Modifier
                 )
                 .padding(14.dp),
@@ -221,11 +226,11 @@ private fun EmptyHistoryState() {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 28.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
+            .hermesGlass(
                 shape = RoundedCornerShape(24.dp),
-                containerAlpha = 0.55f,
-                borderAlpha = 0.12f,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.55f,
+                normalBorderAlpha = 0.12f,
             )
             .padding(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -250,11 +255,11 @@ private fun HistorySkeleton(index: Int) {
         Column(
             modifier = Modifier
                 .fillMaxWidth(if (index % 2 == 0) 0.72f else 0.58f)
-                .frostedGlass(
-                    colors = MaterialTheme.colorScheme,
+                .hermesGlass(
                     shape = RoundedCornerShape(18.dp),
-                    containerAlpha = 0.42f,
-                    borderAlpha = 0.12f,
+                    role = HermesGlassRole.ChatBubble,
+                    normalContainerAlpha = 0.42f,
+                    normalBorderAlpha = 0.12f,
                 )
                 .padding(12.dp),
         ) {
@@ -272,3 +277,4 @@ private fun HistorySkeleton(index: Int) {
         }
     }
 }
+

@@ -282,7 +282,10 @@ class ChatRetryPayloadTest {
         advanceUntilIdle()
 
         assertEquals(1, requests.size)
-        assertTrue(viewModel.uiState.value.queuedPrompts.isEmpty())
+        assertTrue(
+            viewModel.uiState.value.queuedPrompts.isEmpty(),
+            viewModel.uiState.value.toString(),
+        )
         assertEquals(false, viewModel.uiState.value.isConnecting)
         assertEquals(false, viewModel.uiState.value.isStreaming)
         assertEquals(ConnectionState.Disconnected, viewModel.uiState.value.connectionState)
@@ -327,7 +330,10 @@ class ChatRetryPayloadTest {
         advanceUntilIdle()
 
         assertEquals(2, requests.size)
-        assertTrue(viewModel.uiState.value.queuedPrompts.isEmpty())
+        assertTrue(
+            viewModel.uiState.value.queuedPrompts.isEmpty(),
+            viewModel.uiState.value.toString(),
+        )
         assertEquals(
             listOf("first", "second"),
             viewModel.uiState.value.messages.filter { it.role == "user" }.map { it.content },
@@ -347,8 +353,8 @@ class ChatRetryPayloadTest {
         coEvery { repository.saveLocalMessage(any()) } just runs
         every { repository.streamChat(any<ChatCompletionRequest>(), any<String>()) } answers {
             requests += firstArg<ChatCompletionRequest>()
-            requestStarted.complete(Unit)
             flow {
+                requestStarted.complete(Unit)
                 failNow.await()
                 throw IOException("offline")
             }
@@ -369,7 +375,10 @@ class ChatRetryPayloadTest {
         failNow.complete(Unit)
         advanceUntilIdle()
 
-        assertTrue(viewModel.uiState.value.queuedPrompts.isEmpty())
+        assertTrue(
+            viewModel.uiState.value.queuedPrompts.isEmpty(),
+            viewModel.uiState.value.toString(),
+        )
         assertEquals(
             listOf("first"),
             viewModel.uiState.value.messages.filter { it.role == "user" }.map { it.content },

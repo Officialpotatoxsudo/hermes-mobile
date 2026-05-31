@@ -12,6 +12,9 @@ import kotlinx.serialization.json.put
 data class ChatMessageDto(
     val role: String,
     val content: String,
+    val reasoning: String? = null,
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
 )
 
 @Serializable
@@ -87,7 +90,31 @@ data class ChatChoice(
 @Serializable
 data class ChatDelta(
     val content: String? = null,
-)
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
+    val reasoning: String? = null,
+    @SerialName("reasoning_delta")
+    val reasoningDelta: String? = null,
+    val thought: String? = null,
+    val thinking: String? = null,
+    val analysis: String? = null,
+) {
+    val reasoningText: String?
+        get() = listOf(
+            reasoningContent,
+            reasoning,
+            reasoningDelta,
+            thought,
+            thinking,
+            analysis,
+        ).firstNonBlank()
+}
+
+private fun List<String?>.firstNonBlank(): String? {
+    return firstNotNullOfOrNull { value ->
+        value?.takeIf { it.isNotBlank() }
+    }
+}
 
 @Serializable
 data class TokenUsage(
@@ -170,6 +197,9 @@ data class SessionMessageDto(
     val role: String,
     val content: String,
     val timestamp: Long,
+    val reasoning: String? = null,
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
 )
 
 @Serializable

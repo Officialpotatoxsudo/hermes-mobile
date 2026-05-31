@@ -18,6 +18,12 @@ interface MessageDao {
 
     suspend fun getBySessionId(sessionId: String): List<MessageEntity> = getBySessionId(LEGACY_ACCOUNT_SCOPE, sessionId)
 
+    @Query("SELECT * FROM messages WHERE account_scope = :accountScope")
+    suspend fun getByScope(accountScope: String): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE account_scope != :accountScope")
+    suspend fun getOutsideScope(accountScope: String): List<MessageEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(messages: List<MessageEntity>)
 

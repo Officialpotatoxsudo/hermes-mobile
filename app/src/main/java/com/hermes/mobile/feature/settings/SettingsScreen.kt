@@ -28,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,14 +41,19 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hermes.mobile.core.settings.LiquidGlassConfig
 import com.hermes.mobile.core.settings.LockTimeout
 import com.hermes.mobile.core.settings.ThemeMode
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.core.settings.VisualStyle
 import com.hermes.mobile.ui.components.HermesChip
 import com.hermes.mobile.ui.components.HermesHeader
+import com.hermes.mobile.core.settings.HermesGlassRole
+import com.hermes.mobile.ui.components.hermesGlass
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
+import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
@@ -77,8 +83,43 @@ fun SettingsScreen(
                 .graphicsLayer { alpha = contentAlpha.value; translationY = contentOffset.value }
                 .verticalScroll(rememberScrollState()),
         ) {
+            SectionHeader("Account")
+            SettingsSection {
+                ConnectionRow(state.serverUrl.ifBlank { "Not configured" }, onEditConnection)
+            }
+
+            Spacer(Modifier.height(20.dp))
             SectionHeader("Appearance")
             SettingsSection {
+                SettingItem("Interface", "Choose the app surface system") {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        VisualStyle.entries.forEach { style ->
+                            HermesChip(
+                                text = style.label,
+                                selected = state.visualStyle == style,
+                                onClick = { viewModel.setVisualStyle(style) },
+                            )
+                        }
+                    }
+                }
+                AnimatedVisibility(
+                    visible = state.visualStyle == VisualStyle.LiquidGlass,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    Column {
+                        SectionDivider()
+                        LiquidGlassSettingsControls(
+                            config = state.liquidGlassConfig,
+                            onConfigChange = viewModel::updateLiquidGlassConfig,
+                            onReset = viewModel::resetLiquidGlassConfig,
+                        )
+                    }
+                }
+                SectionDivider()
                 SettingItem("Theme", "Choose app color mode") {
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -144,13 +185,14 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            SectionHeader("Account")
+            SectionHeader("Danger", danger = true)
             SettingsSection {
-                ConnectionRow(state.serverUrl.ifBlank { "Not configured" }, onEditConnection)
+                LogoutRow(
+                    "Log out",
+                    if (state.isLoggingOut) "Clearing local credentials..." else "Clear credentials",
+                    viewModel::confirmLogout,
+                )
             }
-
-            Spacer(Modifier.height(20.dp))
-            LogoutRow("Log out", if (state.isLoggingOut) "Clearing local credentials..." else "Clear credentials", viewModel::confirmLogout)
 
             state.logoutError?.let { error ->
                 Text(
@@ -198,14 +240,15 @@ private fun SectionHeader(title: String, danger: Boolean = false) {
 
 @Composable
 private fun SettingsSection(content: @Composable () -> Unit) {
+    val shape = RoundedCornerShape(24.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
-                shape = RoundedCornerShape(24.dp),
-                containerAlpha = 0.72f,
-                borderAlpha = 0.16f,
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.72f,
+                normalBorderAlpha = 0.16f,
             )
             .padding(horizontal = 18.dp, vertical = 16.dp),
     ) {
@@ -228,6 +271,104 @@ private fun SettingItem(title: String, subtitle: String, content: @Composable ()
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
         content()
+    }
+}
+
+@Composable
+private fun LiquidGlassSettingsControls(
+    config: LiquidGlassConfig,
+    onConfigChange: ((LiquidGlassConfig) -> LiquidGlassConfig) -> Unit,
+    onReset: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Liquid Glass", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Clear glass, tuned live",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            HermesChip(
+                text = "Reset",
+                selected = false,
+                onClick = onReset,
+            )
+        }
+        GlassControlSlider("Blur", config.blur, 0f..24f, "dp") { value ->
+            onConfigChange { it.copy(blur = value) }
+        }
+        GlassControlSlider("Refraction", config.refractionAmount, 18f..80f, "dp") { value ->
+            onConfigChange { it.copy(refractionAmount = value) }
+        }
+        GlassControlSlider("Height", config.refractionHeight, 12f..50f, "dp") { value ->
+            onConfigChange { it.copy(refractionHeight = value) }
+        }
+        GlassControlSlider("Radius", config.cornerRadius, 12f..44f, "dp") { value ->
+            onConfigChange { it.copy(cornerRadius = value) }
+        }
+        GlassControlSlider("Opacity", config.surfaceAlpha, 0f..0.75f, "") { value ->
+            onConfigChange { it.copy(surfaceAlpha = value) }
+        }
+        GlassControlSlider("Dispersion", config.dispersion, 0f..1f, "") { value ->
+            onConfigChange { it.copy(dispersion = value) }
+        }
+        GlassControlSlider("Nav elasticity", config.navElasticity, 0.4f..1.5f, "") { value ->
+            onConfigChange { it.copy(navElasticity = value) }
+        }
+        GlassSettingToggle(
+            title = "Chromatic edge",
+            checked = config.chromaticAberration,
+        ) { checked ->
+            onConfigChange { it.copy(chromaticAberration = checked) }
+        }
+        GlassSettingToggle(
+            title = "Depth effect",
+            checked = config.depthEffect,
+        ) { checked ->
+            onConfigChange { it.copy(depthEffect = checked) }
+        }
+    }
+}
+
+@Composable
+private fun GlassControlSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    suffix: String,
+    onChange: (Float) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Text(
+                formatGlassValue(value, suffix),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+        )
+    }
+}
+
+@Composable
+private fun GlassSettingToggle(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -301,8 +442,7 @@ private fun LogoutRow(title: String, subtitle: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+            .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -316,3 +456,13 @@ private fun LogoutRow(title: String, subtitle: String, onClick: () -> Unit) {
         )
     }
 }
+
+private fun formatGlassValue(value: Float, suffix: String): String {
+    val text = if (value >= 10f) {
+        value.roundToInt().toString()
+    } else {
+        String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
+    return if (suffix.isBlank()) text else "$text$suffix"
+}
+

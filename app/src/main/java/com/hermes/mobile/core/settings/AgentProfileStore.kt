@@ -5,16 +5,19 @@ internal fun buildCustomAgentProfile(
     name: String,
     subtitle: String,
     avatarUri: String? = null,
+    instructions: String = "",
 ): AgentProfile? {
     val cleanId = id.cleanAgentId() ?: return null
     val cleanName = name.cleanProfileTextLine()?.takeCleanly(40) ?: return null
     val cleanSubtitle = subtitle.cleanProfileTextLine() ?: "Custom Hermes agent"
+    val cleanInstructions = instructions.cleanProfileTextBlock().takeCleanly(MAX_AGENT_INSTRUCTIONS_LENGTH)
     return AgentProfile(
         id = cleanId,
         name = cleanName,
         subtitle = cleanSubtitle.takeCleanly(96),
         initial = cleanName.agentInitial(),
         avatarUri = avatarUri?.takeIf { it.isNotBlank() },
+        instructions = cleanInstructions,
     )
 }
 
@@ -28,7 +31,7 @@ internal fun mergeStoredAgentProfiles(stored: List<AgentProfile>): List<AgentPro
         if (agent.id.cleanAgentId() == defaultAgent.id) {
             null
         } else {
-            buildCustomAgentProfile(agent.id, agent.name, agent.subtitle)
+            buildCustomAgentProfile(agent.id, agent.name, agent.subtitle, agent.avatarUri, agent.instructions)
         }
     }
     return (AppPreferences.defaultAgents + customAgents).distinctBy { it.id }
@@ -40,7 +43,9 @@ internal fun upsertCustomAgent(
 ): List<AgentProfile> {
     val existing = current.firstOrNull { it.id == agent.id }
     val avatarUri = agent.avatarUri ?: existing?.avatarUri
-    val cleanAgent = buildCustomAgentProfile(agent.id, agent.name, agent.subtitle, avatarUri) ?: return mergeStoredAgentProfiles(current)
+    val instructions = agent.instructions.ifBlank { existing?.instructions.orEmpty() }
+    val cleanAgent = buildCustomAgentProfile(agent.id, agent.name, agent.subtitle, avatarUri, instructions)
+        ?: return mergeStoredAgentProfiles(current)
     val defaultAgent = AppPreferences.defaultAgents.first()
     if (cleanAgent.id == defaultAgent.id) return mergeStoredAgentProfiles(current).filterNot { it.id == defaultAgent.id }
     val customAgents = mergeStoredAgentProfiles(current).filterNot { it.id == defaultAgent.id }
@@ -80,6 +85,13 @@ private fun String.cleanProfileTextLine(): String? {
         .takeIf { it.isNotBlank() }
 }
 
+private fun String.cleanProfileTextBlock(): String {
+    return lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotBlank() }
+        .orEmpty()
+}
+
 private fun String.takeCleanly(maxLength: Int): String {
     if (length <= maxLength) return this
     val head = take(maxLength).trimEnd()
@@ -88,3 +100,4 @@ private fun String.takeCleanly(maxLength: Int): String {
 }
 
 private const val MIN_PROFILE_TEXT_WORD_BOUNDARY = 24
+private const val MAX_AGENT_INSTRUCTIONS_LENGTH = 2_000

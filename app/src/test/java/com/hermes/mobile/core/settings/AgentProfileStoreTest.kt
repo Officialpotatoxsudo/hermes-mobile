@@ -12,11 +12,13 @@ class AgentProfileStoreTest {
             id = "\n agent-1\nagent-2 ",
             name = "\n Researcher\nIgnored ",
             subtitle = "\n Search and summarize\nIgnored ",
+            instructions = "\n Use reliable sources.\nIgnored ",
         )
 
         assertEquals("agent-1", profile?.id)
         assertEquals("Researcher", profile?.name)
         assertEquals("Search and summarize", profile?.subtitle)
+        assertEquals("Use reliable sources.", profile?.instructions)
         assertEquals("R", profile?.initial)
     }
 
@@ -82,6 +84,25 @@ class AgentProfileStoreTest {
     }
 
     @Test
+    fun storedAgentsKeepAvatarUriAfterSanitizing() {
+        val stored = listOf(
+            AgentProfile(
+                id = " agent-1 ",
+                name = " Researcher ",
+                subtitle = " Role ",
+                initial = "R",
+                avatarUri = "content://avatar/1",
+                instructions = " Use project context ",
+            ),
+        )
+
+        val sanitized = mergeStoredAgentProfiles(stored).last()
+
+        assertEquals("content://avatar/1", sanitized.avatarUri)
+        assertEquals("Use project context", sanitized.instructions)
+    }
+
+    @Test
     fun upsertsCustomAgentWithoutDuplicating() {
         val current = listOf(AgentProfile("agent-1", "Old", "Old role", "O"))
         val updated = buildCustomAgentProfile("agent-1", "New", "New role")!!
@@ -96,6 +117,22 @@ class AgentProfileStoreTest {
         val updated = buildCustomAgentProfile("agent-1", "New", "New role")!!
 
         assertEquals(listOf(updated, second), upsertCustomAgent(listOf(first, second), updated))
+    }
+
+    @Test
+    fun upsertPreservesExistingInstructionsWhenNotProvided() {
+        val current = listOf(
+            AgentProfile(
+                id = "agent-1",
+                name = "Old",
+                subtitle = "Old role",
+                initial = "O",
+                instructions = "Keep this system prompt",
+            ),
+        )
+        val updated = buildCustomAgentProfile("agent-1", "New", "New role")!!
+
+        assertEquals("Keep this system prompt", upsertCustomAgent(current, updated).single().instructions)
     }
 
     @Test

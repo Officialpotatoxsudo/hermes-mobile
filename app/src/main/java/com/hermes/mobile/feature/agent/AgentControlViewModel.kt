@@ -3,13 +3,7 @@ package com.hermes.mobile.feature.agent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.data.HermesRepository
-import com.hermes.mobile.core.util.escapeJson
-import com.hermes.mobile.core.util.unescapeJson
 import com.hermes.mobile.core.error.ErrorMapper
-import com.hermes.mobile.core.model.HermesFeatureAction
-import com.hermes.mobile.core.model.HermesFeatureActionKind
-import com.hermes.mobile.core.model.HermesFeatureCategory
-import com.hermes.mobile.core.model.hermesFeatureCatalog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,15 +12,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-private val initialCategory = hermesFeatureCatalog.first { it.id == "memory" }
-private val initialAction = initialCategory.actions.first()
+data class AgentControlAction(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val target: String,
+)
 
 data class AgentControlUiState(
-    val categories: List<HermesFeatureCategory> = hermesFeatureCatalog,
-    val selectedCategory: HermesFeatureCategory = initialCategory,
-    val selectedAction: HermesFeatureAction = initialAction,
-    val body: String = "",
-    val response: String = "",
+    val actions: List<AgentControlAction> = systemControlActions,
+    val selectedAction: AgentControlAction? = systemControlActions.firstOrNull(),
+    val resultText: String = "",
     val isLoading: Boolean = false,
     val error: String? = null,
 )
@@ -37,117 +33,87 @@ class AgentControlViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AgentControlUiState())
     val uiState: StateFlow<AgentControlUiState> = _uiState.asStateFlow()
+    private var latestRequestId = 0L
 
     init {
-        prepareOrRun(initialAction)
+        systemControlActions.firstOrNull()?.let(::selectAction)
     }
 
-    fun selectCategory(category: HermesFeatureCategory) {
-        val action = category.actions.first()
+    fun selectAction(action: AgentControlAction) {
+        val current = _uiState.value
+        if (current.isLoading && current.selectedAction?.id == action.id) return
+        val requestId = ++latestRequestId
+
         _uiState.update {
             it.copy(
-                selectedCategory = category,
                 selectedAction = action,
-                body = "",
-                response = "",
+                resultText = "",
                 error = null,
+                isLoading = true,
             )
         }
-        prepareOrRun(action)
-    }
-
-    fun selectAction(action: HermesFeatureAction) {
-        _uiState.update {
-            it.copy(selectedAction = action, body = "", response = "", error = null)
-        }
-        prepareOrRun(action)
-    }
-
-    fun onBodyChanged(value: String) {
-        _uiState.update { it.copy(body = value, error = null) }
-    }
-
-    fun runSelectedAction() {
-        val state = _uiState.value
-        runAction(state.selectedAction, state.body.ifBlank { state.selectedAction.uiBodyTemplate() })
-    }
-
-    private fun prepareOrRun(action: HermesFeatureAction) {
-        when (action.kind) {
-            HermesFeatureActionKind.Read -> runAction(action, action.bodyTemplate)
-            HermesFeatureActionKind.Command -> _uiState.update {
-                it.copy(
-                    body = commandPrompt(action.target),
-                    response = "Tap Run to ask Hermes to perform this action on the connected agent.",
-                )
-            }
-            HermesFeatureActionKind.Create,
-            HermesFeatureActionKind.Update,
-            HermesFeatureActionKind.Delete -> _uiState.update {
-                it.copy(
-                    body = action.uiBodyTemplate(),
-                    response = if (action.target == "v1/runs") {
-                        "Edit instruction if needed, then Run."
-                    } else {
-                        "Edit details if needed, then Run."
-                    },
-                )
-            }
-        }
-    }
-
-    private fun runAction(action: HermesFeatureAction, body: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, response = "") }
-            val requestBody = action.requestBody(body)
-            val result = when (action.kind) {
-                HermesFeatureActionKind.Read -> repository.getText(action.target)
-                HermesFeatureActionKind.Create -> repository.postText(action.target, requestBody)
-                HermesFeatureActionKind.Update -> repository.putText(action.target, requestBody)
-                HermesFeatureActionKind.Delete -> repository.deleteText(action.target)
-                HermesFeatureActionKind.Command -> repository.postText("v1/runs", runRequestBody(body))
-            }
-            result
+            repository.getText(action.target)
                 .onSuccess { text ->
-                    _uiState.update {
-                        it.copy(
-                            body = if (action.kind == HermesFeatureActionKind.Read) text else it.body,
-                            response = text.ifBlank { "${action.title} complete" },
+                    _uiState.update { state ->
+                        if (!state.isCurrentControlRequest(action, requestId)) return@update state
+                        state.copy(
+                            resultText = text.ifBlank { "${action.title} is available." },
+                            error = null,
                         )
                     }
                 }
                 .onFailure { error ->
-                    _uiState.update { it.copy(error = ErrorMapper.userMessage(error, "${action.title} failed")) }
+                    _uiState.update { state ->
+                        if (!state.isCurrentControlRequest(action, requestId)) return@update state
+                        state.copy(error = ErrorMapper.userMessage(error, "${action.title} unavailable"))
+                    }
                 }
-            _uiState.update { it.copy(isLoading = false) }
+            _uiState.update { state ->
+                if (state.isCurrentControlRequest(action, requestId)) {
+                    state.copy(isLoading = false)
+                } else {
+                    state
+                }
+            }
         }
     }
 
-    private fun HermesFeatureAction.requestBody(body: String): String {
-        val trimmed = body.trim()
-        if (trimmed.startsWith("{")) return trimmed
-        return if (target == "v1/runs") runRequestBody(trimmed.ifBlank { uiBodyTemplate() }) else trimmed.ifBlank { bodyTemplate }
+    fun refreshSelected() {
+        _uiState.value.selectedAction?.let(::selectAction)
     }
 
-    private fun runRequestBody(input: String): String {
-        val trimmed = input.trim()
-        if (trimmed.startsWith("{")) return trimmed
-        return """{"input":"${trimmed.escapeJson()}"}"""
-    }
-
-    private fun HermesFeatureAction.uiBodyTemplate(): String {
-        if (target != "v1/runs") return bodyTemplate
-        return Regex(""""input"\s*:\s*"((?:\\.|[^"])*)"""")
-            .find(bodyTemplate)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.unescapeJson()
-            ?: bodyTemplate
-    }
-
-    private fun commandPrompt(command: String): String {
-        return "Hermes native command requested from mobile: $command\n" +
-            "Run the equivalent Hermes desktop/gateway action if available. " +
-            "Return concise output plus any next action the mobile user can take."
+    private fun AgentControlUiState.isCurrentControlRequest(
+        action: AgentControlAction,
+        requestId: Long,
+    ): Boolean {
+        return selectedAction?.id == action.id && requestId == latestRequestId
     }
 }
+
+val systemControlActions = listOf(
+    AgentControlAction(
+        id = "server.health",
+        title = "Server Health",
+        subtitle = "Connection and API heartbeat",
+        target = "health",
+    ),
+    AgentControlAction(
+        id = "server.capabilities",
+        title = "Capabilities",
+        subtitle = "Available API features",
+        target = "v1/capabilities",
+    ),
+    AgentControlAction(
+        id = "server.models",
+        title = "Models",
+        subtitle = "Model list from the connected server",
+        target = "v1/models",
+    ),
+    AgentControlAction(
+        id = "server.details",
+        title = "Details",
+        subtitle = "Detailed server diagnostics",
+        target = "health/detailed",
+    ),
+)

@@ -32,6 +32,7 @@ class HermesRestClient @Inject constructor(
             val request = Request.Builder()
                 .url(serverUrl.endpoint("health"))
                 .applyBearer(apiKey)
+                .applyHermesMobileClientHeaders()
                 .get()
                 .build()
             client.newCall(request).execute().use { response ->
@@ -145,6 +146,7 @@ class HermesRestClient @Inject constructor(
                 val request = Request.Builder()
                     .url(tokenStore.serverUrl.endpoint(path))
                     .applyBearer(tokenStore.apiKey)
+                    .applyHermesMobileClientHeaders()
                     .post(messageBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
                 client.newCall(request).execute().use { response ->
@@ -190,6 +192,7 @@ class HermesRestClient @Inject constructor(
             val request = Request.Builder()
                 .url(tokenStore.serverUrl.endpoint(path))
                 .applyBearer(tokenStore.apiKey)
+                .applyHermesMobileClientHeaders()
                 .method(method, body?.toRequestBody("application/json; charset=utf-8".toMediaType()))
                 .build()
             client.newCall(request).execute().use { response ->
@@ -210,12 +213,14 @@ class HermesRestClient @Inject constructor(
             return Request.Builder()
                 .url(tokenStore.serverUrl.endpoint(path))
                 .applyBearer(tokenStore.apiKey)
+                .applyHermesMobileClientHeaders()
                 .get()
                 .build()
         }
         return Request.Builder()
             .url(tokenStore.serverUrl.endpoint(path))
             .applyBearer(tokenStore.apiKey)
+            .applyHermesMobileClientHeaders()
             .get()
             .build()
     }

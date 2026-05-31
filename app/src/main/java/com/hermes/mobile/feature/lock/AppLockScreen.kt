@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -61,8 +62,11 @@ import android.content.ContextWrapper
 @Composable
 fun AppLockScreen(
     onUnlocked: () -> Unit,
+    blockBack: Boolean = true,
     viewModel: AppLockViewModel = hiltViewModel(),
 ) {
+    BackHandler(enabled = blockBack) {}
+
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()

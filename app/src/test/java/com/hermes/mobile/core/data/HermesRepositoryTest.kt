@@ -6,6 +6,7 @@ import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.auth.connectionIdentityFor
 import com.hermes.mobile.core.data.local.LEGACY_ACCOUNT_SCOPE
 import com.hermes.mobile.core.data.local.MessageDao
+import com.hermes.mobile.core.data.local.MessageEntity
 import com.hermes.mobile.core.data.local.SessionDao
 import com.hermes.mobile.core.model.MessagesResponse
 import com.hermes.mobile.core.model.SessionDto
@@ -203,6 +204,52 @@ class HermesRepositoryTest {
         coVerify { messageDao.deleteStaleRemoteMessages("scope-a", "session-1", listOf(10L, 11L)) }
     }
 
+    @Test
+    fun localHistoryFromOlderConnectionScopesIsCopiedIntoActiveAgentScope() = runTest {
+        val activeScope = connectionIdentityFor("https://new-url.example", "api-key")
+        val oldScope = "old-url-scoped-identity"
+        val oldSession = sessionDto("session-1").toTestEntity(oldScope, localLastActivityAt = 2_000)
+        val oldMessage = MessageEntity(
+            id = 7L,
+            sessionId = "session-1",
+            role = "user",
+            content = "continue me",
+            timestamp = 7L,
+            accountScope = oldScope,
+            remoteBacked = false,
+        )
+        val sessionDao = mockk<SessionDao>()
+        val messageDao = mockk<MessageDao>()
+        every { sessionDao.getAllFlow(activeScope) } returns flowOf(emptyList())
+        coEvery { sessionDao.getByScope(activeScope) } returns emptyList()
+        coEvery { sessionDao.getOutsideScope(activeScope) } returns listOf(oldSession)
+        coEvery { sessionDao.upsertAll(any()) } returns Unit
+        coEvery { messageDao.getByScope(activeScope) } returns emptyList()
+        coEvery { messageDao.getOutsideScope(activeScope) } returns listOf(oldMessage)
+        coEvery { messageDao.upsertAll(any()) } returns Unit
+        val repository = HermesRepository(
+            restClient = mockk<HermesRestClient>(),
+            sseClient = mockk<SseClient>(),
+            sessionDao = sessionDao,
+            messageDao = messageDao,
+            tokenStore = scopedTokenStore(activeScope),
+            appContext = testContext(),
+        )
+
+        repository.sessions("").first()
+
+        coVerify {
+            sessionDao.upsertAll(match { sessions ->
+                sessions.single().id == "session-1" && sessions.single().accountScope == activeScope
+            })
+        }
+        coVerify {
+            messageDao.upsertAll(match { messages ->
+                messages.single().content == "continue me" && messages.single().accountScope == activeScope
+            })
+        }
+    }
+
     private fun scopedTokenStore(scope: String = ""): TokenStore {
         val tokenStore = mockk<TokenStore>()
         every { tokenStore.serverUrl } returns "https://agent.example"
@@ -231,6 +278,20 @@ class HermesRepositoryTest {
             id = id,
             title = id,
             startedAt = 1L,
+        )
+    }
+
+    private fun SessionDto.toTestEntity(scope: String, localLastActivityAt: Long): com.hermes.mobile.core.data.local.SessionEntity {
+        return com.hermes.mobile.core.data.local.SessionEntity(
+            id = id,
+            title = title,
+            source = source,
+            startedAt = startedAt,
+            endedAt = endedAt,
+            messageCount = messageCount,
+            model = model,
+            accountScope = scope,
+            localLastActivityAt = localLastActivityAt,
         )
     }
 }

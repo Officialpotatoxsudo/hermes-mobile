@@ -16,8 +16,10 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,28 +29,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.Memory
 import coil3.compose.AsyncImage
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -74,21 +75,36 @@ import com.hermes.mobile.core.util.formatMessageCount
 import com.hermes.mobile.core.util.formatTimestamp
 import com.hermes.mobile.feature.chat.ChatStreamSnapshot
 import com.hermes.mobile.feature.sessions.SessionListViewModel
+import com.hermes.mobile.core.settings.HermesGlassRole
+import com.hermes.mobile.core.settings.VisualStyle
 import com.hermes.mobile.ui.components.HermesSearchField
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.ui.components.LocalHermesVisualStyle
+import com.hermes.mobile.ui.components.hermesGlass
 import kotlinx.coroutines.delay
 
 @Composable
 fun HomeScreen(
     onAgentClick: (AgentProfile, String?) -> Unit,
+    onSessionClick: (String) -> Unit = {},
+    onAllChatsClick: () -> Unit = {},
+    onControlsClick: () -> Unit = {},
+    onWorkflowClick: () -> Unit = {},
     viewModel: SessionListViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val rows = remember(state.sessions, state.agents, state.activeStreams) {
-        conversationInboxRows(state.sessions, state.agents, state.activeStreams)
+    var dashboardNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(DASHBOARD_CLOCK_TICK_MS)
+            dashboardNow = System.currentTimeMillis()
+        }
     }
+    val rows = remember(state.sessions, state.agents, state.activeStreams, dashboardNow) {
+        conversationInboxRows(state.sessions, state.agents, state.activeStreams, now = dashboardNow)
+    }
+    val continueRow = remember(rows) { dashboardContinueRow(rows) }
     val defaultAgent = state.agents.firstOrNull() ?: AppPreferences.defaultAgents.first()
-
+    val isSearching = state.query.isNotBlank()
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -114,40 +130,47 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .animateContentSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 18.dp, bottom = 104.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = 104.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (rows.isEmpty()) {
-                item {
-                    EmptyConversationState(onStartChat = { onAgentClick(defaultAgent, null) })
+            if (isSearching) {
+                item { SectionLabel("Search results") }
+                if (rows.isEmpty()) {
+                    item {
+                        EmptyConversationState(onStartChat = { onAgentClick(defaultAgent, null) })
+                    }
+                } else {
+                    itemsIndexed(rows, key = { _, it -> it.sessionId }) { index, row ->
+                        AnimatedConversationRow(
+                            index = index,
+                            row = row,
+                            onClick = { onSessionClick(row.sessionId) },
+                        )
+                    }
                 }
             } else {
                 item {
-                    Text(
-                        text = "Recent",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
+                    ContinueWorkCard(
+                        row = continueRow,
+                        onStartChat = { onAgentClick(defaultAgent, null) },
+                        onContinue = { row -> onSessionClick(row.sessionId) },
                     )
                 }
-                itemsIndexed(rows, key = { _, it -> it.sessionId }) { index, row ->
-                    val agent = state.agents.firstOrNull { it.id == row.agentId } ?: defaultAgent
-                    val animAlpha = remember { Animatable(0f) }
-                    val animOffset = remember { Animatable(30f) }
-                    LaunchedEffect(row.sessionId) {
-                        delay(index * 30L)
-                        animAlpha.animateTo(1f, animationSpec = spring(stiffness = 300f))
-                        animOffset.animateTo(0f, animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f))
-                    }
-                    Box(
-                        modifier = Modifier.graphicsLayer {
-                            alpha = animAlpha.value
-                            translationY = animOffset.value
-                        },
-                    ) {
-                        ConversationRow(
+                item {
+                    QuickActionsGrid(
+                        onNewChat = { onAgentClick(defaultAgent, null) },
+                        onAllChats = onAllChatsClick,
+                        onControls = onControlsClick,
+                        onWorkflow = onWorkflowClick,
+                    )
+                }
+                if (rows.isNotEmpty()) {
+                    item { SectionLabel("Recent") }
+                    itemsIndexed(rows, key = { _, it -> it.sessionId }) { index, row ->
+                        AnimatedConversationRow(
+                            index = index,
                             row = row,
-                            onClick = { onAgentClick(agent, row.sessionId) },
+                            onClick = { onSessionClick(row.sessionId) },
                         )
                     }
                 }
@@ -163,6 +186,8 @@ private fun HomeTopBar(
     onQueryChange: (String) -> Unit,
     onStartChat: () -> Unit,
 ) {
+    val actionShape = RoundedCornerShape(50.dp)
+    val usesLiquidGlass = LocalHermesVisualStyle.current == VisualStyle.LiquidGlass
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -179,7 +204,7 @@ private fun HomeTopBar(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "Conversations and agents",
+                    "Resume or start a conversation",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -190,8 +215,25 @@ private fun HomeTopBar(
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(50.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f))
+                    .then(
+                        if (usesLiquidGlass) {
+                            Modifier.hermesGlass(
+                                shape = actionShape,
+                                role = HermesGlassRole.Action,
+                                normalContainerAlpha = 0.82f,
+                                normalBorderAlpha = 0.12f,
+                            )
+                        } else {
+                            Modifier
+                                .clip(actionShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f))
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    shape = actionShape,
+                                )
+                        }
+                    )
                     .clickable(onClick = onStartChat)
                     .padding(start = 14.dp, end = 18.dp, top = 11.dp, bottom = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -220,6 +262,289 @@ private fun HomeTopBar(
     }
 }
 
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 6.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun AnimatedConversationRow(
+    index: Int,
+    row: ConversationRowModel,
+    onClick: () -> Unit,
+) {
+    val animAlpha = remember(row.sessionId) { Animatable(0f) }
+    val animOffset = remember(row.sessionId) { Animatable(30f) }
+    LaunchedEffect(row.sessionId) {
+        delay(index * 30L)
+        animAlpha.animateTo(1f, animationSpec = spring(stiffness = 300f))
+        animOffset.animateTo(0f, animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f))
+    }
+    Box(
+        modifier = Modifier.graphicsLayer {
+            alpha = animAlpha.value
+            translationY = animOffset.value
+        },
+    ) {
+        ConversationRow(row = row, onClick = onClick)
+    }
+}
+
+@Composable
+private fun ContinueWorkCard(
+    row: ConversationRowModel?,
+    onStartChat: () -> Unit,
+    onContinue: (ConversationRowModel) -> Unit,
+) {
+    val shape = RoundedCornerShape(24.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp)
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.7f,
+                normalBorderAlpha = 0.22f,
+            )
+            .clickable { row?.let(onContinue) ?: onStartChat() }
+            .padding(16.dp),
+    ) {
+        Text(
+            "Resume chat",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(10.dp))
+        if (row == null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Start a conversation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Choose an agent and keep the thread here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AgentAvatar(
+                    label = row.agentInitial,
+                    active = row.liveState != "none",
+                    size = 48,
+                    usesDefaultAvatar = row.usesDefaultAvatar,
+                    avatarUri = row.avatarUri,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            row.title,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        DashboardStatePill(row.liveState, row.unreadCount)
+                    }
+                    Text(
+                        row.preview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "${row.agentName} - ${row.timestamp}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.74f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardStatePill(liveState: String, unreadCount: Int) {
+    val label = dashboardStateLabel(liveState, unreadCount) ?: return
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .padding(start = 8.dp)
+            .clip(RoundedCornerShape(50.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun DashboardMetricsStrip(metrics: HomeDashboardMetrics) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        MetricTile("Live", metrics.liveCount.toString(), Modifier.weight(1f))
+        MetricTile("Unread", metrics.unreadCount.coerceAtLeast(0).toString(), Modifier.weight(1f))
+        MetricTile("Chats", metrics.chatCount.toString(), Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun MetricTile(label: String, value: String, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        modifier = modifier
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.Status,
+                normalContainerAlpha = 0.52f,
+                normalBorderAlpha = 0.16f,
+            )
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        Text(value, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun QuickActionsGrid(
+    onNewChat: () -> Unit,
+    onAllChats: () -> Unit,
+    onControls: () -> Unit,
+    onWorkflow: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QuickActionButton("New", Icons.Rounded.Add, onNewChat, Modifier.weight(1f))
+            QuickActionButton("All chats", Icons.Rounded.ChatBubble, onAllChats, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QuickActionButton("Workflow", Icons.Rounded.AutoAwesome, onWorkflow, Modifier.weight(1f))
+            QuickActionButton("Controls", Icons.Rounded.Build, onControls, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun QuickActionButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 56.dp)
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.Action,
+                normalContainerAlpha = 0.58f,
+                normalBorderAlpha = 0.18f,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun AgentLaunchRail(
+    rows: List<DashboardAgentRow>,
+    onAgentClick: (DashboardAgentRow) -> Unit,
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(rows, key = { it.agent.id }) { row ->
+            AgentLaunchCard(row = row, onClick = { onAgentClick(row) })
+        }
+    }
+}
+
+@Composable
+private fun AgentLaunchCard(row: DashboardAgentRow, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    Column(
+        modifier = Modifier
+            .width(148.dp)
+            .heightIn(min = 142.dp)
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.58f,
+                normalBorderAlpha = 0.18f,
+            )
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        AgentAvatar(
+            label = row.agent.initial,
+            active = false,
+            size = 42,
+            usesDefaultAvatar = row.agent.id == AppPreferences.defaultAgents.first().id,
+            avatarUri = row.agent.avatarUri,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            row.agent.name,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            row.subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 data class ConversationRowModel(
     val sessionId: String,
     val agentId: String,
@@ -234,6 +559,18 @@ data class ConversationRowModel(
     val unreadCount: Int = 0,
 )
 
+data class HomeDashboardMetrics(
+    val liveCount: Int,
+    val unreadCount: Int,
+    val chatCount: Int,
+)
+
+data class DashboardAgentRow(
+    val agent: AgentProfile,
+    val latestSessionId: String?,
+    val subtitle: String,
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
@@ -245,14 +582,18 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
         animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
         label = "cardScale",
     )
+    val shape = RoundedCornerShape(24.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 18.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.44f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.44f,
+                normalBorderAlpha = 0.18f,
+            )
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -342,6 +683,7 @@ private fun ConversationRow(row: ConversationRowModel, onClick: () -> Unit) {
 
 @Composable
 private fun EmptyConversationState(onStartChat: () -> Unit) {
+    val shape = RoundedCornerShape(30.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -353,9 +695,12 @@ private fun EmptyConversationState(onStartChat: () -> Unit) {
                 .fillMaxWidth()
                 .minimumInteractiveComponentSize()
                 .heightIn(min = 56.dp)
-                .clip(RoundedCornerShape(30.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f), RoundedCornerShape(30.dp))
+                .hermesGlass(
+                    shape = shape,
+                    role = HermesGlassRole.Action,
+                    normalContainerAlpha = 0.58f,
+                    normalBorderAlpha = 0.28f,
+                )
                 .clickable(onClick = onStartChat)
                 .padding(start = 12.dp, end = 18.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -382,104 +727,18 @@ private fun EmptyConversationState(onStartChat: () -> Unit) {
     }
 }
 
-@Composable
-private fun AgentListRow(
-    agent: AgentProfile,
-    session: SessionEntity?,
-    onClick: () -> Unit,
-    onEdit: (() -> Unit)?,
-    onDelete: (() -> Unit)?,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
-                shape = RoundedCornerShape(22.dp),
-                containerAlpha = 0.72f,
-                borderAlpha = 0.14f,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AgentAvatar(
-            label = agent.initial,
-            active = session != null,
-            size = 54,
-            usesDefaultAvatar = agent.id == AppPreferences.defaultAgents.first().id,
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                agent.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Text(
-                agentRowSubtitle(agent, session),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
-        if (onEdit != null || onDelete != null) {
-            Box {
-                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        Icons.Rounded.MoreVert,
-                        contentDescription = "Manage ${agent.name}",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    onEdit?.let {
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
-                            onClick = {
-                                menuOpen = false
-                                it()
-                            },
-                        )
-                    }
-                    onDelete?.let {
-                        DropdownMenuItem(
-                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Rounded.Delete,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
-                            },
-                            onClick = {
-                                menuOpen = false
-                                it()
-                            },
-                        )
-                    }
-                }
-            }
-        } else {
-            Icon(
-                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-internal fun latestSessionsByAgent(sessions: List<SessionEntity>): Map<String, SessionEntity> {
+internal fun latestSessionsByAgent(
+    sessions: List<SessionEntity>,
+    defaultAgentId: String = AppPreferences.defaultAgents.first().id,
+): Map<String, SessionEntity> {
     val byAgent = linkedMapOf<String, SessionEntity>()
     sessions.forEach { session ->
-        val agentId = agentIdFromChatSessionId(session.id) ?: return@forEach
+        val agentId = agentIdFromChatSessionId(session.id) ?: defaultAgentId
         val current = byAgent[agentId]
-        if (current == null || session.localLastActivityAt > current.localLastActivityAt) {
+        if (current == null ||
+            session.localLastActivityAt > current.localLastActivityAt ||
+            (session.localLastActivityAt == current.localLastActivityAt && session.startedAt > current.startedAt)
+        ) {
             byAgent[agentId] = session
         }
     }
@@ -490,11 +749,29 @@ internal fun conversationInboxRows(
     sessions: List<SessionEntity>,
     agents: List<AgentProfile>,
     activeStreams: Map<String, ChatStreamSnapshot> = emptyMap(),
+    now: Long = System.currentTimeMillis(),
 ): List<ConversationRowModel> {
     val defaultAgent = agents.firstOrNull() ?: AppPreferences.defaultAgents.first()
     val agentsById = agents.associateBy { it.id }
-    val now = System.currentTimeMillis()
-    return sessions
+    val savedSessionIds = sessions.map { it.id }.toSet()
+    val syntheticStreamingSessions = activeStreams
+        .filterKeys { it !in savedSessionIds }
+        .values
+        .map { stream ->
+            val startedAt = stream.userMessage?.timestamp ?: stream.assistantMessageId
+            SessionEntity(
+                id = stream.sessionId,
+                title = null,
+                source = "mobile",
+                startedAt = startedAt,
+                endedAt = null,
+                messageCount = if (stream.content.isBlank() && stream.receivedAttachments.isEmpty()) 1 else 2,
+                model = "hermes-agent",
+                localLastActivityAt = maxOf(startedAt, stream.assistantMessageId),
+                lastMessagePreview = stream.userMessage?.content,
+            )
+        }
+    return (sessions + syntheticStreamingSessions)
         .sortedWith(
             compareByDescending<SessionEntity> { it.localLastActivityAt }
                 .thenByDescending { it.startedAt },
@@ -523,6 +800,48 @@ internal fun conversationInboxRows(
         }
 }
 
+internal fun dashboardMetrics(rows: List<ConversationRowModel>): HomeDashboardMetrics {
+    return HomeDashboardMetrics(
+        liveCount = rows.count { it.liveState in dashboardLiveStates },
+        unreadCount = rows.sumOf { it.unreadCount.coerceAtLeast(0) },
+        chatCount = rows.size,
+    )
+}
+
+internal fun dashboardContinueRow(rows: List<ConversationRowModel>): ConversationRowModel? {
+    return rows.minWithOrNull(
+        compareBy<ConversationRowModel> { dashboardContinuePriority(it.liveState) }
+            .thenByDescending { it.unreadCount.coerceAtLeast(0) }
+    )
+}
+
+internal fun dashboardAgentRows(
+    agents: List<AgentProfile>,
+    sessions: List<SessionEntity>,
+): List<DashboardAgentRow> {
+    val defaultAgentId = AppPreferences.defaultAgents.first().id
+    val latestByAgent = latestSessionsByAgent(sessions, defaultAgentId)
+    return agents
+        .mapIndexed { index, agent ->
+            val latestSession = latestByAgent[agent.id]
+            IndexedDashboardAgentRow(
+                index = index,
+                row = DashboardAgentRow(
+                    agent = agent,
+                    latestSessionId = latestSession?.id,
+                    subtitle = agentRowSubtitle(agent, latestSession),
+                ),
+                latestActivityAt = latestSession?.localLastActivityAt ?: Long.MIN_VALUE,
+            )
+        }
+        .sortedWith(
+            compareBy<IndexedDashboardAgentRow> { if (it.row.agent.id == defaultAgentId) 0 else 1 }
+                .thenByDescending { it.latestActivityAt }
+                .thenBy { it.index },
+        )
+        .map { it.row }
+}
+
 internal fun conversationLiveState(
     session: SessionEntity,
     now: Long = System.currentTimeMillis(),
@@ -545,6 +864,34 @@ internal fun conversationLiveStateLabel(liveState: String): String? {
         else -> null
     }
 }
+
+internal fun dashboardStateLabel(liveState: String, unreadCount: Int): String? {
+    return when {
+        liveState == "error" -> "Issue"
+        liveState == "thinking" -> "Thinking"
+        liveState == "streaming" -> "Live"
+        unreadCount > 0 -> "Unread"
+        liveState == "recent" -> "Active"
+        else -> null
+    }
+}
+
+private fun dashboardContinuePriority(liveState: String): Int {
+    return when (liveState) {
+        "error" -> 0
+        "thinking" -> 1
+        "streaming" -> 2
+        "unread" -> 3
+        "recent" -> 4
+        else -> 5
+    }
+}
+
+private data class IndexedDashboardAgentRow(
+    val index: Int,
+    val row: DashboardAgentRow,
+    val latestActivityAt: Long,
+)
 
 private fun ChatStreamSnapshot?.conversationPreview(): String? {
     if (this == null) return null
@@ -587,7 +934,9 @@ private fun String.cleanAgentSubtitleLine(): String {
 private const val MAX_AGENT_SUBTITLE_LENGTH = 48
 private const val MIN_AGENT_SUBTITLE_WORD_BOUNDARY = 24
 private const val RECENT_ACTIVITY_WINDOW_MS = 2 * 60 * 1000L
+private const val DASHBOARD_CLOCK_TICK_MS = 30 * 1000L
 private const val STREAMING_PREVIEW = "Streaming..."
+private val dashboardLiveStates = setOf("thinking", "streaming", "error")
 
 @Composable
 private fun AgentAvatar(
@@ -649,127 +998,3 @@ private fun AgentAvatar(
     }
 }
 
-@Composable
-private fun AgentFormPanel(
-    title: String,
-    saveLabel: String,
-    name: String,
-    subtitle: String,
-    onNameChange: (String) -> Unit,
-    onSubtitleChange: (String) -> Unit,
-    onCancel: () -> Unit,
-    onSave: () -> Unit,
-) {
-    val canSave = name.isNotBlank()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
-                shape = RoundedCornerShape(22.dp),
-                containerAlpha = 0.72f,
-                borderAlpha = 0.14f,
-            )
-            .padding(16.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = name,
-            onValueChange = onNameChange,
-            label = { Text("Name") },
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = subtitle,
-            onValueChange = onSubtitleChange,
-            label = { Text("Role") },
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.align(Alignment.End)) {
-            Text(
-                "Cancel",
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable(onClick = onCancel)
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-            )
-            Text(
-                saveLabel,
-                color = if (canSave) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (canSave) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable(enabled = canSave, onClick = onSave)
-                    .padding(horizontal = 16.dp, vertical = 9.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeleteAgentPanel(
-    agent: AgentProfile,
-    onCancel: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
-                shape = RoundedCornerShape(22.dp),
-                containerAlpha = 0.72f,
-                borderAlpha = 0.14f,
-            )
-            .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
-            .padding(16.dp),
-    ) {
-        Text("Delete ${agent.name}?", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Chat history stays. Agent shortcut is removed.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.align(Alignment.End)) {
-            Text(
-                "Cancel",
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .clickable(onClick = onCancel)
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-            )
-            Text(
-                "Delete",
-                color = MaterialTheme.colorScheme.onError,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .heightIn(min = 44.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(MaterialTheme.colorScheme.error)
-                    .clickable(onClick = onDelete)
-                    .padding(horizontal = 16.dp, vertical = 9.dp),
-            )
-        }
-    }
-}

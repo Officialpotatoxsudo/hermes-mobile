@@ -180,6 +180,47 @@ class MessageMediaUtilsTest {
     }
 
     @Test
+    fun parsesStructuredAttachmentPayloadsFromAssistantContent() {
+        val content = """
+            Files are ready.
+
+            {"attachments":[{"url":"https://cdn.example.com/reports/planning-report.pdf","name":"Planning report.pdf","mime_type":"application/pdf"}]}
+        """.trimIndent()
+
+        val attachments = receivedAttachmentsFromMessage(content)
+
+        assertEquals(listOf(ReceivedAttachmentKind.File), attachments.map { it.kind })
+        assertEquals(listOf("Planning report.pdf"), attachments.map { it.label })
+        assertEquals(listOf("application/pdf"), attachments.map { it.mimeType })
+        assertEquals("Files are ready.", visibleReceivedAttachmentText(content))
+    }
+
+    @Test
+    fun parsesPrettyPrintedStructuredAttachmentPayloadsFromAssistantContent() {
+        val content = """
+            Files are ready.
+
+            ```json
+            {
+              "attachments": [
+                {
+                  "url": "https://cdn.example.com/reports/planning-report.pdf",
+                  "name": "Planning report.pdf",
+                  "mime_type": "application/pdf"
+                }
+              ]
+            }
+            ```
+        """.trimIndent()
+
+        val attachments = receivedAttachmentsFromMessage(content)
+
+        assertEquals(listOf(ReceivedAttachmentKind.File), attachments.map { it.kind })
+        assertEquals(listOf("Planning report.pdf"), attachments.map { it.label })
+        assertEquals("Files are ready.", visibleReceivedAttachmentText(content))
+    }
+
+    @Test
     fun receivedAttachmentParserIgnoresUnsafeAndPlainLinks() {
         val content = """
             [Docs](https://example.com/docs)

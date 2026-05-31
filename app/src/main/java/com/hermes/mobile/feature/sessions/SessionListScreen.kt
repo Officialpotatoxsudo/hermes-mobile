@@ -42,9 +42,10 @@ import com.airbnb.lottie.compose.rememberLottieComposition
 import com.hermes.mobile.R
 import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.core.util.formatTimestamp
+import com.hermes.mobile.core.settings.HermesGlassRole
 import com.hermes.mobile.ui.components.HermesHeader
 import com.hermes.mobile.ui.components.HermesSearchField
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.ui.components.hermesGlass
 import kotlinx.coroutines.delay
 
 @Composable
@@ -124,11 +125,11 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
+            .hermesGlass(
                 shape = RoundedCornerShape(24.dp),
-                containerAlpha = 0.72f,
-                borderAlpha = 0.16f,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.72f,
+                normalBorderAlpha = 0.16f,
             )
             .clickable(onClick = onClick)
             .padding(16.dp),
@@ -183,11 +184,11 @@ private fun SessionSkeleton(index: Int) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .frostedGlass(
-                colors = MaterialTheme.colorScheme,
+            .hermesGlass(
                 shape = RoundedCornerShape(24.dp),
-                containerAlpha = 0.42f,
-                borderAlpha = 0.12f,
+                role = HermesGlassRole.Status,
+                normalContainerAlpha = 0.42f,
+                normalBorderAlpha = 0.12f,
             )
             .padding(16.dp),
     ) {
@@ -198,3 +199,4 @@ private fun SessionSkeleton(index: Int) {
 }
 
 private fun formatTimestamp(timestamp: Long): String = com.hermes.mobile.core.util.formatTimestamp(timestamp, "MMM d, HH:mm")
+

@@ -1,6 +1,5 @@
 package com.hermes.mobile.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
@@ -14,11 +13,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.hermes.mobile.core.settings.HermesGlassRole
 
 @Composable
 fun HermesHeader(
@@ -48,15 +47,20 @@ fun HermesHeader(
             }
         }
         if (trailingAction != null && onTrailingAction != null) {
+            val actionShape = RoundedCornerShape(20.dp)
             Text(
                 trailingAction,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
                     .defaultMinSize(minHeight = 48.dp)
+                    .hermesGlass(
+                        shape = actionShape,
+                        role = HermesGlassRole.Action,
+                        normalContainerAlpha = 0.5f,
+                        normalBorderAlpha = 0.1f,
+                    )
                     .semantics { role = Role.Button }
                     .clickable(onClick = onTrailingAction)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }

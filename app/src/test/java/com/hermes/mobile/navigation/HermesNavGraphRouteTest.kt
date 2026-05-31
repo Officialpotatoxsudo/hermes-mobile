@@ -12,6 +12,11 @@ class HermesNavGraphRouteTest {
     }
 
     @Test
+    fun liquidGlassRouteIsAvailableAsLibraryExperiment() {
+        assertEquals("liquid_glass_lab", Routes.LiquidGlassLab)
+    }
+
+    @Test
     fun appLockGateRequiresCredentialsEnabledLockAndLockedSession() {
         assertEquals(
             true,
@@ -49,6 +54,15 @@ class HermesNavGraphRouteTest {
                 currentRoute = Routes.AppLock,
             ),
         )
+    }
+
+    @Test
+    fun appLockBackIsBlockedOnlyWhenProtectedRouteIsBehindIt() {
+        assertEquals(true, shouldBlockAppLockBack(Routes.Home))
+        assertEquals(true, shouldBlockAppLockBack("${Routes.Chat}/{sessionId}?agentName={agentName}"))
+        assertEquals(false, shouldBlockAppLockBack(null))
+        assertEquals(false, shouldBlockAppLockBack(Routes.Splash))
+        assertEquals(false, shouldBlockAppLockBack(Routes.AppLock))
     }
 
     @Test
@@ -146,6 +160,15 @@ class HermesNavGraphRouteTest {
             "chat/telegram%3Atopic%2F42%20A",
             sessionListClickRoute(" telegram:topic/42 A "),
         )
+    }
+
+    @Test
+    fun resumeChatRouteUsesExistingSessionWithoutCreatingAgentThread() {
+        assertEquals(
+            "chat/agent-chat-hermes--2000",
+            resumeChatRoute(" agent-chat-hermes--2000 "),
+        )
+        assertEquals("chat", resumeChatRoute("   "))
     }
 
     @Test

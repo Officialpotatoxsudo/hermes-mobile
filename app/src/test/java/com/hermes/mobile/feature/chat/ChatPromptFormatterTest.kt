@@ -94,6 +94,20 @@ class ChatPromptFormatterTest {
     }
 
     @Test
+    fun voiceRecordingLabelFormatsElapsedDuration() {
+        assertEquals("Voice note 0:00", voiceRecordingLabel(250))
+        assertEquals("Voice note 0:05", voiceRecordingLabel(5_300))
+        assertEquals("Voice note 1:04", voiceRecordingLabel(64_000))
+    }
+
+    @Test
+    fun recordingAmplitudeLevelNormalizesRecorderAmplitude() {
+        assertEquals(0.04f, recordingAmplitudeLevel(0))
+        assertEquals(0.5f, recordingAmplitudeLevel(16_384))
+        assertEquals(1f, recordingAmplitudeLevel(99_999))
+    }
+
+    @Test
     fun fileAttachmentLabelTrimsForDisplayAndPrompt() {
         val payload = buildChatPromptPayload(
             prompt = "",
@@ -291,5 +305,51 @@ class ChatPromptFormatterTest {
 
         assertEquals("Image", imageMessage.readableContent())
         assertEquals("2 attachments", mixedMessage.previewContent())
+    }
+
+    @Test
+    fun reasoningTagsAreSeparatedFromVisibleAssistantContent() {
+        val split = splitReasoningFromContent(
+            """
+                <think>
+                Check local cache first.
+                Then answer briefly.
+                </think>
+
+                The chat is restored.
+            """.trimIndent(),
+        )
+
+        assertEquals("Check local cache first.\nThen answer briefly.", split.reasoning)
+        assertEquals("The chat is restored.", split.content)
+    }
+
+    @Test
+    fun unfinishedReasoningTagIsHiddenWhileStreaming() {
+        val split = splitReasoningFromContent(
+            """
+                <think>
+                Checking saved sessions.
+                Still checking
+            """.trimIndent(),
+        )
+
+        assertEquals("Checking saved sessions.\nStill checking", split.reasoning)
+        assertEquals("", split.content)
+    }
+
+    @Test
+    fun explicitReasoningDoesNotPolluteReadableMessageText() {
+        val message = ChatUiMessage(
+            id = "assistant-1",
+            role = "assistant",
+            content = "<think>hidden chain</think>\n\nFinal answer",
+            reasoning = "server reasoning",
+            time = "10:00",
+        )
+
+        assertEquals("Final answer", message.visibleContent())
+        assertEquals("Final answer", message.readableContent())
+        assertEquals("server reasoning\n\nhidden chain", message.reasoningContent())
     }
 }

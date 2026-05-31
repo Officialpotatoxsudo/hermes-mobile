@@ -3,7 +3,6 @@ package com.hermes.mobile.navigation
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -14,40 +13,55 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -66,17 +80,32 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hermes.mobile.core.settings.AgentProfile
+import com.hermes.mobile.core.settings.LiquidGlassConfig
+import com.hermes.mobile.core.settings.VisualStyle
 import com.hermes.mobile.core.util.newAgentChatSessionId
 import com.hermes.mobile.feature.agent.AgentControlScreen
+import com.hermes.mobile.feature.agent.AgentProfilesScreen
+import com.hermes.mobile.feature.agent.ParallelAgentWorkflowScreen
 import com.hermes.mobile.feature.chat.ChatShellScreen
 import com.hermes.mobile.feature.connection.ConnectionSetupScreen
 import com.hermes.mobile.feature.home.HomeScreen
+import com.hermes.mobile.feature.lab.LiquidGlassLabScreen
 import com.hermes.mobile.feature.lock.AppLockScreen
 import com.hermes.mobile.feature.settings.SettingsScreen
 import com.hermes.mobile.feature.sessions.SessionHistoryScreen
 import com.hermes.mobile.feature.sessions.SessionListScreen
 import java.net.URLEncoder
 import com.hermes.mobile.feature.splash.SplashScreen
+import com.hermes.mobile.core.settings.HermesGlassRole
+import com.hermes.mobile.ui.components.LocalHermesLiquidGlassBackdrop
+import com.hermes.mobile.ui.components.LocalHermesLiquidGlassConfig
+import com.hermes.mobile.ui.components.LocalHermesVisualStyle
+import com.hermes.mobile.ui.components.hermesGlass
+import com.hermes.mobile.core.settings.hermesGlassTypeForRole
+import com.hermes.mobile.ui.components.liquidGlassSurface
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlinx.coroutines.delay
 
 object Routes {
     const val Splash = "splash"
@@ -88,7 +117,10 @@ object Routes {
     const val Sessions = "sessions"
     const val SessionHistory = "session_history"
     const val Settings = "settings"
+    const val AgentProfiles = "agent_profiles"
     const val AgentControl = "agent_control"
+    const val ParallelAgents = "parallel_agents"
+    const val LiquidGlassLab = "liquid_glass_lab"
 }
 
 private data class MainTab(
@@ -103,6 +135,34 @@ private val mainTabs = listOf(
     MainTab(Routes.Library, "Library", Icons.Rounded.Folder, Icons.Outlined.FolderOpen),
     MainTab(Routes.Settings, "Profile", Icons.Rounded.Person, Icons.Outlined.PersonOutline),
 )
+
+internal data class LiquidNavMotion(
+    val scaleX: Float,
+    val scaleY: Float,
+    val translationY: Float,
+)
+
+internal fun liquidNavMotion(
+    scrollPressure: Float,
+    dragPressure: Float,
+    config: LiquidGlassConfig,
+): LiquidNavMotion {
+    val cleanConfig = config.coerced()
+    val pressure = (kotlin.math.abs(scrollPressure).coerceIn(0f, 1f) + kotlin.math.abs(dragPressure).coerceIn(0f, 1f))
+        .coerceIn(0f, 2f) * cleanConfig.navElasticity
+    val clamped = pressure.coerceIn(0f, 3f)
+    return LiquidNavMotion(
+        scaleX = 1f + 0.026f * clamped,
+        scaleY = 1f - 0.032f * clamped,
+        translationY = -8f * clamped,
+    )
+}
+
+internal fun contentBackdropEnabledForStyle(style: VisualStyle): Boolean = false
+
+internal fun bottomNavBackdropEnabledForStyle(style: VisualStyle): Boolean {
+    return style == VisualStyle.LiquidGlass
+}
 
 @Composable
 fun HermesNavGraph(
@@ -133,28 +193,114 @@ fun HermesNavGraph(
         }
     }
     val isMainTab = currentRoute in mainTabs.map { it.route }
+    val visualStyle = LocalHermesVisualStyle.current
+    val liquidGlassConfig = LocalHermesLiquidGlassConfig.current.coerced()
+    val liquidGlassEnabled = visualStyle == VisualStyle.LiquidGlass
+    val contentBackdropEnabled = contentBackdropEnabledForStyle(visualStyle)
+    val bottomNavBackdropEnabled = bottomNavBackdropEnabledForStyle(visualStyle)
+    val shellBackdrop = rememberLayerBackdrop {
+        drawContent()
+    }
+    var navScrollPressure by remember { mutableFloatStateOf(0f) }
+    var navDragPressure by remember { mutableFloatStateOf(0f) }
+    val navMotion = liquidNavMotion(
+        scrollPressure = navScrollPressure,
+        dragPressure = navDragPressure,
+        config = liquidGlassConfig,
+    )
+    LaunchedEffect(navScrollPressure, liquidGlassEnabled) {
+        if (liquidGlassEnabled && navScrollPressure != 0f) {
+            delay(130)
+            navScrollPressure = 0f
+        }
+    }
+    LaunchedEffect(navDragPressure, liquidGlassEnabled) {
+        if (liquidGlassEnabled && navDragPressure != 0f) {
+            delay(120)
+            navDragPressure = 0f
+        }
+    }
+    val navScrollConnection = remember(liquidGlassEnabled) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (liquidGlassEnabled && source == NestedScrollSource.UserInput && available.y != 0f) {
+                    navScrollPressure = (navScrollPressure + (-available.y / 420f)).coerceIn(-1f, 1f)
+                }
+                return Offset.Zero
+            }
+        }
+    }
 
-    Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
-        bottomBar = {
-            AnimatedVisibility(
-                visible = isMainTab,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.navigationBars)
-                        .padding(horizontal = 26.dp, vertical = 9.dp),
+    CompositionLocalProvider(
+        LocalHermesLiquidGlassBackdrop provides if (contentBackdropEnabled) shellBackdrop else null,
+    ) {
+        Scaffold(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            contentWindowInsets = WindowInsets(0),
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = isMainTab,
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.navigationBars)
+                            .padding(horizontal = 26.dp, vertical = 9.dp)
+                            .graphicsLayer {
+                                if (liquidGlassEnabled) {
+                                    scaleX = navMotion.scaleX
+                                    scaleY = navMotion.scaleY
+                                    translationY = navMotion.translationY
+                                    transformOrigin = TransformOrigin(0.5f, 1f)
+                                }
+                            },
+                    ) {
+                    val navShape = RoundedCornerShape(40.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .shadow(18.dp, RoundedCornerShape(40.dp), ambientColor = MaterialTheme.colorScheme.background, spotColor = MaterialTheme.colorScheme.background)
-                            .clip(RoundedCornerShape(40.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), RoundedCornerShape(40.dp))
+                            .shadow(
+                                if (liquidGlassEnabled) 24.dp else 18.dp,
+                                navShape,
+                                ambientColor = if (liquidGlassEnabled) {
+                                    Color.Black.copy(alpha = 0.18f)
+                                } else {
+                                    MaterialTheme.colorScheme.background
+                                },
+                                spotColor = if (liquidGlassEnabled) {
+                                    Color.Black.copy(alpha = 0.22f)
+                                } else {
+                                    MaterialTheme.colorScheme.background
+                                },
+                            )
+                            .then(
+                                if (bottomNavBackdropEnabled) {
+                                    Modifier.liquidGlassSurface(
+                                        backdrop = shellBackdrop,
+                                        config = liquidGlassConfig,
+                                        shape = navShape,
+                                        type = hermesGlassTypeForRole(HermesGlassRole.Navigation),
+                                    )
+                                } else {
+                                    Modifier
+                                        .clip(navShape)
+                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f), navShape)
+                                },
+                            )
+                            .pointerInput(liquidGlassEnabled) {
+                                if (liquidGlassEnabled) {
+                                    detectDragGestures(
+                                        onDragCancel = { navDragPressure = 0f },
+                                        onDragEnd = { navDragPressure = 0f },
+                                        onDrag = { _, dragAmount ->
+                                            navDragPressure = (navDragPressure + dragAmount.y / 180f).coerceIn(-1f, 1f)
+                                        },
+                                    )
+                                }
+                            }
                             .padding(horizontal = 8.dp, vertical = 7.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
@@ -184,12 +330,17 @@ fun HermesNavGraph(
                                     .clip(RoundedCornerShape(32.dp))
                                     .background(
                                         if (selected) {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            if (liquidGlassEnabled) {
+                                                Color.White.copy(alpha = 0.16f)
+                                            } else {
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            }
                                         } else {
-                                            androidx.compose.ui.graphics.Color.Transparent
+                                            Color.Transparent
                                         },
                                     )
                                     .semantics { this.selected = selected }
+                                    .defaultMinSize(minHeight = 48.dp)
                                     .clickable(
                                         interactionSource = interactionSource,
                                         indication = null,
@@ -228,7 +379,17 @@ fun HermesNavGraph(
             }
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(navScrollConnection)
+                .then(if (bottomNavBackdropEnabled) Modifier.layerBackdrop(shellBackdrop) else Modifier),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+            )
             val navHostModifier = if (isMainTab) {
                 Modifier
                     .fillMaxSize()
@@ -236,7 +397,7 @@ fun HermesNavGraph(
             } else {
                 Modifier.fillMaxSize()
             }
-             NavHost(
+            NavHost(
                 navController = navController,
                 startDestination = startDestination,
                 modifier = navHostModifier,
@@ -278,6 +439,7 @@ fun HermesNavGraph(
                 }
                 composable(Routes.AppLock) {
                     AppLockScreen(
+                        blockBack = shouldBlockAppLockBack(navController.previousBackStackEntry?.destination?.route),
                         onUnlocked = {
                             onUnlocked()
                             if (!navController.popBackStack()) {
@@ -291,29 +453,25 @@ fun HermesNavGraph(
                 composable(Routes.Home) {
                     HomeScreen(
                         onAgentClick = { agent, latestSessionId -> navController.navigate(agentChatRoute(agent, latestSessionId)) },
+                        onSessionClick = { sessionId -> navController.navigate(resumeChatRoute(sessionId)) },
+                        onAllChatsClick = { navController.navigate(Routes.Sessions) },
+                        onControlsClick = { navController.navigate(Routes.AgentControl) },
+                        onWorkflowClick = { navController.navigate(Routes.ParallelAgents) },
                     )
                 }
                 composable(Routes.Library) {
                     LibraryScreen(
                         onAllChats = { navController.navigate(Routes.Sessions) },
-                        onAgents = { navController.navigate(Routes.AgentControl) },
+                        onAgents = { navController.navigate(Routes.AgentProfiles) },
+                        onAgentControls = { navController.navigate(Routes.AgentControl) },
+                        onParallelAgents = { navController.navigate(Routes.ParallelAgents) },
+                        onLiquidGlassLab = { navController.navigate(Routes.LiquidGlassLab) },
                     )
                 }
                 composable(Routes.Chat) {
-                    val restoreRoute = latestChatRoute(
-                        routeSessionId = null,
-                        storedLastChatSessionId = lastOpenedChatSessionId,
-                    )
-                    LaunchedEffect(restoreRoute) {
-                        if (restoreRoute != Routes.Chat) {
-                            navController.navigate(restoreRoute) {
-                                popUpTo(Routes.Chat) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        }
-                    }
                     ChatShellScreen(
                         onHistoryClick = { agentId -> navController.navigate(agentId?.let(::agentHistoryRoute) ?: Routes.Sessions) },
+                        onBack = { navController.popChatBackStack() },
                     )
                 }
                 composable(
@@ -328,6 +486,7 @@ fun HermesNavGraph(
                 ) {
                     ChatShellScreen(
                         onHistoryClick = { agentId -> navController.navigate(agentId?.let(::agentHistoryRoute) ?: Routes.Sessions) },
+                        onBack = { navController.popChatBackStack() },
                     )
                 }
                 composable(
@@ -365,20 +524,49 @@ fun HermesNavGraph(
                 composable(Routes.AgentControl) {
                     AgentControlScreen(onBack = { navController.navigateMainTab(Routes.Library) })
                 }
+                composable(Routes.AgentProfiles) {
+                    AgentProfilesScreen(
+                        onBack = { navController.navigateMainTab(Routes.Library) },
+                        onAgentOpen = { agent -> navController.navigate(agentChatRoute(agent)) },
+                    )
+                }
+                composable(Routes.ParallelAgents) {
+                    ParallelAgentWorkflowScreen(
+                        onBack = { navController.navigateMainTab(Routes.Library) },
+                        onOpenSession = { sessionId -> navController.navigate(chatRoute(sessionId)) },
+                    )
+                }
+                composable(Routes.LiquidGlassLab) {
+                    LiquidGlassLabScreen(onBack = { navController.navigateMainTab(Routes.Library) })
+                }
             }
         }
+    }
     }
 }
 
 @Composable
-private fun LibraryScreen(onAllChats: () -> Unit, onAgents: () -> Unit) {
+private fun LibraryScreen(
+    onAllChats: () -> Unit,
+    onAgents: () -> Unit,
+    onAgentControls: () -> Unit,
+    onParallelAgents: () -> Unit,
+    onLiquidGlassLab: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .statusBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Library", style = MaterialTheme.typography.headlineLarge.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+        Text(
+            "Saved work and native controls",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
         LibraryRow(
             title = "All chats",
             subtitle = "Search and continue every saved conversation",
@@ -387,10 +575,29 @@ private fun LibraryScreen(onAllChats: () -> Unit, onAgents: () -> Unit) {
         )
         LibraryRow(
             title = "Agents",
-            subtitle = "Manage profiles, tools, memory, and skills",
+            subtitle = "Manage local chat profiles",
             icon = Icons.Rounded.Memory,
             onClick = onAgents,
         )
+        LibraryRow(
+            title = "Controls",
+            subtitle = "Check server status and capabilities",
+            icon = Icons.Rounded.Build,
+            onClick = onAgentControls,
+        )
+        LibraryRow(
+            title = "Parallel agents",
+            subtitle = "Run one prompt across multiple agents",
+            icon = Icons.Rounded.AutoAwesome,
+            onClick = onParallelAgents,
+        )
+        LibraryRow(
+            title = "Liquid Glass Lab",
+            subtitle = "Preview glass UI components",
+            icon = Icons.Rounded.AutoAwesome,
+            onClick = onLiquidGlassLab,
+        )
+        Box(Modifier.weight(1f))
     }
 }
 
@@ -401,13 +608,17 @@ private fun LibraryRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(22.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp)
-            .shadow(2.dp, RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
+            .defaultMinSize(minHeight = 74.dp)
+            .hermesGlass(
+                shape = shape,
+                role = HermesGlassRole.ReadablePanel,
+                normalContainerAlpha = 0.62f,
+                normalBorderAlpha = 0.18f,
+            )
             .clickable(onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -416,8 +627,8 @@ private fun LibraryRow(
             modifier = Modifier
                 .padding(end = 14.dp)
                 .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -440,6 +651,12 @@ private fun NavHostController.navigateMainTab(route: String) {
     }
 }
 
+private fun NavHostController.popChatBackStack() {
+    if (!popBackStack()) {
+        navigateMainTab(Routes.Home)
+    }
+}
+
 internal fun shouldShowAppLock(
     hasCredentials: Boolean,
     appLockEnabled: Boolean,
@@ -452,6 +669,13 @@ internal fun shouldShowAppLock(
         currentRoute != null &&
         currentRoute != Routes.Splash &&
         currentRoute != Routes.AppLock
+}
+
+internal fun shouldBlockAppLockBack(previousRoute: String?): Boolean {
+    return previousRoute != null &&
+        previousRoute != Routes.Splash &&
+        previousRoute != Routes.AppLock &&
+        previousRoute != Routes.ConnectionSetup
 }
 
 internal fun splashNextRoute(
@@ -504,6 +728,8 @@ internal fun agentHistoryRoute(agentId: String): String {
 
 internal fun sessionListClickRoute(sessionId: String): String = chatRoute(sessionId)
 
+internal fun resumeChatRoute(sessionId: String): String = chatRoute(sessionId)
+
 private fun String.cleanRouteValue(): String {
     return trim()
         .lineSequence()
@@ -515,3 +741,4 @@ private fun String.cleanRouteValue(): String {
 private fun String.routeComponent(): String {
     return URLEncoder.encode(this, Charsets.UTF_8.name()).replace("+", "%20")
 }
+

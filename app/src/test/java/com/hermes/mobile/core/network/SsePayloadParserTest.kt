@@ -1,5 +1,6 @@
 package com.hermes.mobile.core.network
 
+import com.hermes.mobile.core.util.ReceivedAttachmentKind
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -15,6 +16,55 @@ class SsePayloadParserTest {
 
         assertEquals("hi", chunk?.choices?.first()?.delta?.content)
         assertEquals(3, chunk?.usage?.totalTokens)
+    }
+
+    @Test
+    fun parsesReasoningFromStreamingChunk() {
+        val chunk = parser.parseChunk(
+            """{"choices":[{"delta":{"reasoning_content":"checked tools","content":"done"}}]}""",
+        )
+
+        assertEquals("checked tools", chunk?.choices?.first()?.delta?.reasoningText)
+        assertEquals("done", chunk?.choices?.first()?.delta?.content)
+    }
+
+    @Test
+    fun parsesStandaloneReasoningEventPayload() {
+        assertEquals("thinking through files", parser.parseReasoning("""{"delta":"thinking through files"}"""))
+        assertEquals("tool plan", parser.parseReasoning("""{"reasoning":{"message":"tool plan"}}"""))
+    }
+
+    @Test
+    fun standaloneReasoningKeepsMultilineText() {
+        val reasoning = parser.parseReasoning(
+            """
+                {"reasoning":"line one\nline two\n${"x".repeat(220)}"}
+            """.trimIndent(),
+        )
+
+        assertEquals("line one\nline two\n${"x".repeat(220)}", reasoning)
+    }
+
+    @Test
+    fun parsesStandaloneAttachmentEventPayload() {
+        val attachment = parser.parseAttachment(
+            """{"url":"https://cdn.example.com/report.pdf","name":"Report.pdf","mime_type":"application/pdf"}""",
+        )
+
+        assertEquals("https://cdn.example.com/report.pdf", attachment?.url)
+        assertEquals("Report.pdf", attachment?.label)
+        assertEquals(ReceivedAttachmentKind.File, attachment?.kind)
+        assertEquals("application/pdf", attachment?.mimeType)
+    }
+
+    @Test
+    fun parsesNestedAttachmentEventPayload() {
+        val attachment = parser.parseAttachment(
+            """{"attachments":[{"url":"https://cdn.example.com/report.pdf","name":"Report.pdf","mime_type":"application/pdf"}]}""",
+        )
+
+        assertEquals("https://cdn.example.com/report.pdf", attachment?.url)
+        assertEquals("Report.pdf", attachment?.label)
     }
 
     @Test

@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.data.HermesRepository
 import com.hermes.mobile.core.settings.AppPreferences
+import com.hermes.mobile.core.settings.LiquidGlassConfig
 import com.hermes.mobile.core.settings.LockTimeout
 import com.hermes.mobile.core.settings.ThemeMode
+import com.hermes.mobile.core.settings.VisualStyle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +20,8 @@ import javax.inject.Inject
 
 data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.System,
+    val visualStyle: VisualStyle = VisualStyle.Normal,
+    val liquidGlassConfig: LiquidGlassConfig = LiquidGlassConfig(),
     val appLockEnabled: Boolean = true,
     val lockTimeout: LockTimeout = LockTimeout.FiveMinutes,
     val hideChatPreviews: Boolean = true,
@@ -34,17 +38,36 @@ class SettingsViewModel @Inject constructor(
     private val repository: HermesRepository,
 ) : ViewModel() {
     private val controls = kotlinx.coroutines.flow.MutableStateFlow(SettingsUiState())
-    private val preferenceState = combine(
+    private val appearanceState = combine(
         appPreferences.themeMode,
+        appPreferences.visualStyle,
+        appPreferences.liquidGlassConfig,
+    ) { themeMode, visualStyle, liquidGlassConfig ->
+        SettingsUiState(
+            themeMode = themeMode,
+            visualStyle = visualStyle,
+            liquidGlassConfig = liquidGlassConfig.coerced(),
+        )
+    }
+    private val securityState = combine(
         appPreferences.appLockEnabled,
         appPreferences.lockTimeout,
         appPreferences.hideChatPreviews,
-    ) { themeMode, appLockEnabled, lockTimeout, hideChatPreviews ->
+    ) { appLockEnabled, lockTimeout, hideChatPreviews ->
         SettingsUiState(
-            themeMode = themeMode,
             appLockEnabled = appLockEnabled,
             lockTimeout = lockTimeout,
             hideChatPreviews = hideChatPreviews,
+        )
+    }
+    private val preferenceState = combine(
+        appearanceState,
+        securityState,
+    ) { appearance, security ->
+        appearance.copy(
+            appLockEnabled = security.appLockEnabled,
+            lockTimeout = security.lockTimeout,
+            hideChatPreviews = security.hideChatPreviews,
         )
     }
 
@@ -55,6 +78,8 @@ class SettingsViewModel @Inject constructor(
     ) { preferences, savedConnection, state ->
         state.copy(
             themeMode = preferences.themeMode,
+            visualStyle = preferences.visualStyle,
+            liquidGlassConfig = preferences.liquidGlassConfig,
             appLockEnabled = preferences.appLockEnabled,
             lockTimeout = preferences.lockTimeout,
             hideChatPreviews = preferences.hideChatPreviews,
@@ -74,6 +99,24 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             appPreferences.setThemeMode(mode)
+        }
+    }
+
+    fun setVisualStyle(style: VisualStyle) {
+        viewModelScope.launch {
+            appPreferences.setVisualStyle(style)
+        }
+    }
+
+    fun updateLiquidGlassConfig(transform: (LiquidGlassConfig) -> LiquidGlassConfig) {
+        viewModelScope.launch {
+            appPreferences.setLiquidGlassConfig(transform(uiState.value.liquidGlassConfig).coerced())
+        }
+    }
+
+    fun resetLiquidGlassConfig() {
+        viewModelScope.launch {
+            appPreferences.resetLiquidGlassConfig()
         }
     }
 

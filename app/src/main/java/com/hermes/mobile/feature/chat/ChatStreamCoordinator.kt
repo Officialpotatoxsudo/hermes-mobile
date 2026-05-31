@@ -8,13 +8,14 @@ import com.hermes.mobile.core.model.ChatCompletionRequest
 import com.hermes.mobile.core.model.TokenUsage
 import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.network.SseEvent
+import com.hermes.mobile.core.util.ReceivedAttachment
 import com.hermes.mobile.core.util.resolveOpenedChatSessionId
+import com.hermes.mobile.core.util.visibleReceivedAttachmentText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.net.SocketTimeoutException
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -34,6 +37,8 @@ data class ChatStreamSnapshot(
     val assistantMessageId: Long,
     val userMessage: MessageEntity? = null,
     val content: String = "",
+    val reasoning: String = "",
+    val receivedAttachments: List<ReceivedAttachment> = emptyList(),
     val tools: List<ToolProgress> = emptyList(),
     val usage: TokenUsage? = null,
     val isConnecting: Boolean = true,
@@ -120,7 +125,11 @@ class ChatStreamCoordinator @Inject constructor(
             isConnecting = true,
         )
         var completed = false
+        var rawContent = ""
         var content = ""
+        var reasoningFromEvents = ""
+        var reasoning = ""
+        var receivedAttachments = emptyList<ReceivedAttachment>()
         var usage: TokenUsage? = null
         var lastError: Throwable? = null
         var userMessageRemotePushed = false
@@ -170,15 +179,42 @@ class ChatStreamCoordinator @Inject constructor(
                             pushUserMessageRemote(activeUserMessage)
                             userMessageRemotePushed = true
                         }
-                        content += event.text
+                        rawContent += event.text
+                        val split = splitReasoningFromContent(rawContent)
+                        content = split.content
+                        reasoning = combineReasoning(reasoningFromEvents, split.reasoning)
                         snapshot = snapshot.copy(
                             content = content,
+                            reasoning = reasoning,
                             isConnecting = false,
                             isStreaming = true,
                             error = null,
                         )
                         updateSnapshot(snapshot)
-                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, usage)
+                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, reasoning, receivedAttachments, usage)
+                    }
+                    is SseEvent.ReasoningDelta -> {
+                        reasoningFromEvents += event.text
+                        reasoning = combineReasoning(reasoningFromEvents, splitReasoningFromContent(rawContent).reasoning)
+                        snapshot = snapshot.copy(
+                            reasoning = reasoning,
+                            isConnecting = false,
+                            isStreaming = true,
+                            error = null,
+                        )
+                        updateSnapshot(snapshot)
+                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, reasoning, receivedAttachments, usage)
+                    }
+                    is SseEvent.Attachment -> {
+                        receivedAttachments = (receivedAttachments + event.attachment).distinctBy { it.url }
+                        snapshot = snapshot.copy(
+                            receivedAttachments = receivedAttachments,
+                            isConnecting = false,
+                            isStreaming = true,
+                            error = null,
+                        )
+                        updateSnapshot(snapshot)
+                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, reasoning, receivedAttachments, usage)
                     }
                     is SseEvent.Tool -> {
                         snapshot = snapshot.copy(
@@ -193,7 +229,7 @@ class ChatStreamCoordinator @Inject constructor(
                         usage = event.usage
                         snapshot = snapshot.copy(usage = usage)
                         updateSnapshot(snapshot)
-                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, usage)
+                        saveAssistantProgress(activeSessionId, command.assistantMessageId, content, reasoning, receivedAttachments, usage)
                     }
                     SseEvent.Done -> {
                         if (!userMessageRemotePushed) {
@@ -203,13 +239,15 @@ class ChatStreamCoordinator @Inject constructor(
                         completed = true
                         snapshot = snapshot.copy(
                             content = content,
+                            reasoning = reasoning,
+                            receivedAttachments = receivedAttachments,
                             usage = usage,
                             isConnecting = false,
                             isStreaming = false,
                             error = null,
                         )
                         updateSnapshot(snapshot)
-                        finish(command, activeSessionId, content)
+                        finish(command, activeSessionId, content, reasoning, receivedAttachments)
                     }
                 }
             }
@@ -228,7 +266,7 @@ class ChatStreamCoordinator @Inject constructor(
                 try {
                     repository.streamChat(request, activeSessionId)
                         .catch { error -> lastError = error }
-                        .collectWithIdleTimeout { event -> handleEvent(event) }
+                        .collectStreamEvents { event -> handleEvent(event) }
                 } catch (error: Throwable) {
                     error.streamTimeoutCause()?.let { lastError = it }
                         ?: if (error is CancellationException) throw error else {
@@ -252,6 +290,7 @@ class ChatStreamCoordinator @Inject constructor(
                     }
                     if (completed) return
                 }
+                if (content.isBlank() && lastError != null && !lastError.isStreamTimeout()) break
                 if (lastError == null && content.isNotBlank()) {
                     if (!userMessageRemotePushed) {
                         pushUserMessageRemote(activeUserMessage)
@@ -259,16 +298,18 @@ class ChatStreamCoordinator @Inject constructor(
                     }
                     snapshot = snapshot.copy(
                         content = content,
+                        reasoning = reasoning,
+                        receivedAttachments = receivedAttachments,
                         usage = usage,
                         isConnecting = false,
                         isStreaming = false,
                         error = null,
                     )
                     updateSnapshot(snapshot)
-                    finish(command, activeSessionId, content)
+                    finish(command, activeSessionId, content, reasoning, receivedAttachments)
                     return
                 }
-                if (content.isNotBlank() && lastError != null) break
+                if ((content.isNotBlank() || reasoning.isNotBlank() || receivedAttachments.isNotEmpty()) && lastError != null) break
                 if (attempt == MAX_STREAM_RETRIES) break
             }
             val readable = ErrorMapper.userMessage(lastError, "Connection lost")
@@ -347,9 +388,11 @@ class ChatStreamCoordinator @Inject constructor(
         sessionId: String,
         assistantMessageId: Long,
         content: String,
+        reasoning: String,
+        receivedAttachments: List<ReceivedAttachment>,
         usage: TokenUsage?,
     ) {
-        if (content.isBlank() && usage == null) return
+        if (content.isBlank() && reasoning.isBlank() && receivedAttachments.isEmpty() && usage == null) return
         val readUpdate = if (isSessionVisible(sessionId)) {
             SessionReadUpdate.MarkRead
         } else {
@@ -361,21 +404,33 @@ class ChatStreamCoordinator @Inject constructor(
                 sessionId = sessionId,
                 role = "assistant",
                 content = content,
+                reasoning = reasoning,
                 timestamp = assistantMessageId,
+                receivedAttachmentsJson = receivedAttachments.toReceivedAttachmentsJson(),
             ),
         )
-        updateSessionAfterAssistant(sessionId, content, readUpdate)
+        updateSessionAfterAssistant(sessionId, content, receivedAttachments, readUpdate)
     }
 
-    private suspend fun finish(command: ChatStreamCommand, sessionId: String, content: String) {
-        val shouldNotify = !isSessionVisible(sessionId) && content.isNotBlank()
-        if (content.isNotBlank()) {
-            saveAssistantProgress(sessionId, command.assistantMessageId, content, usage = null)
+    private suspend fun finish(
+        command: ChatStreamCommand,
+        sessionId: String,
+        content: String,
+        reasoning: String,
+        receivedAttachments: List<ReceivedAttachment>,
+    ) {
+        val hasVisibleReply = content.isNotBlank() || receivedAttachments.isNotEmpty()
+        val shouldNotify = !isSessionVisible(sessionId) && hasVisibleReply
+        if (content.isNotBlank() || reasoning.isNotBlank() || receivedAttachments.isNotEmpty()) {
+            saveAssistantProgress(sessionId, command.assistantMessageId, content, reasoning, receivedAttachments, usage = null)
+        }
+        val remoteContent = content.ifBlank { receivedAttachments.toRemoteAttachmentMessage() }
+        if (remoteContent.isNotBlank()) {
             runCatching {
                 repository.pushMessageToRemote(
                     sessionId = sessionId,
                     role = "assistant",
-                    content = content,
+                    content = remoteContent,
                     timestamp = command.assistantMessageId,
                 )
             }
@@ -383,6 +438,7 @@ class ChatStreamCoordinator @Inject constructor(
         updateSessionAfterAssistant(
             sessionId = sessionId,
             content = content,
+            receivedAttachments = receivedAttachments,
             readUpdate = if (isSessionVisible(sessionId)) {
                 SessionReadUpdate.MarkRead
             } else {
@@ -392,7 +448,7 @@ class ChatStreamCoordinator @Inject constructor(
         jobs.remove(sessionId)
         stopStreamingServiceIfIdle()
         if (shouldNotify) {
-            runCatching { notifications?.notifyReply(sessionId, content) }
+            runCatching { notifications?.notifyReply(sessionId, content.ifBlank { receivedAttachments.receivedAttachmentPreview().orEmpty() }) }
         }
         command.onFinished()
         delay(STREAM_DONE_SNAPSHOT_MS)
@@ -423,12 +479,15 @@ class ChatStreamCoordinator @Inject constructor(
     private suspend fun updateSessionAfterAssistant(
         sessionId: String,
         content: String,
+        receivedAttachments: List<ReceivedAttachment> = emptyList(),
         readUpdate: SessionReadUpdate,
     ) {
         val now = System.currentTimeMillis()
         val existing = runCatching { repository.cachedSession(sessionId) }.getOrNull() ?: return
         val messageCount = runCatching {
-            repository.cachedMessages(sessionId).count { it.content.isNotBlank() || it.imageUrisJson != "[]" }
+            repository.cachedMessages(sessionId).count {
+                it.content.isNotBlank() || it.imageUrisJson != "[]" || it.receivedAttachmentsJson != "[]"
+            }
         }.getOrDefault(existing.messageCount)
         val unreadCount = when (readUpdate) {
             SessionReadUpdate.MarkRead -> 0
@@ -444,7 +503,8 @@ class ChatStreamCoordinator @Inject constructor(
             existing.copy(
                 messageCount = messageCount,
                 localLastActivityAt = now,
-                lastMessagePreview = content.firstReadableLine()?.take(MAX_PREVIEW_LENGTH)
+                lastMessagePreview = visibleReceivedAttachmentText(content).firstReadableLine()?.take(MAX_PREVIEW_LENGTH)
+                    ?: receivedAttachments.receivedAttachmentPreview()
                     ?: existing.lastMessagePreview,
                 unreadCount = unreadCount,
                 lastReadAt = lastReadAt,
@@ -494,33 +554,11 @@ private enum class SessionReadUpdate {
     Preserve,
 }
 
-private suspend fun <T> Flow<T>.collectWithIdleTimeout(onEvent: suspend (T) -> Unit) {
-    coroutineScope {
-        var sawEvent = false
-        var lastEventAt = System.currentTimeMillis()
-        val watchdog = launch {
-            while (true) {
-                delay(STREAM_IDLE_CHECK_MS)
-                val timeoutMs = if (sawEvent) STREAM_EVENT_IDLE_TIMEOUT_MS else STREAM_FIRST_EVENT_TIMEOUT_MS
-                if (System.currentTimeMillis() - lastEventAt >= timeoutMs) {
-                    val message = if (sawEvent) {
-                        "Stream idle timeout"
-                    } else {
-                        "Stream first event timeout"
-                    }
-                    throw SocketTimeoutException(message)
-                }
-            }
-        }
-        try {
-            collect { event ->
-                sawEvent = true
-                lastEventAt = System.currentTimeMillis()
-                onEvent(event)
-            }
-        } finally {
-            watchdog.cancel()
-        }
+private suspend fun <T> Flow<T>.collectStreamEvents(
+    onEvent: suspend (T) -> Unit,
+) {
+    collect { event ->
+        onEvent(event)
     }
 }
 
@@ -545,17 +583,48 @@ private fun List<ToolProgress>.withToolProgress(progress: ToolProgress): List<To
     return updated.takeLast(MAX_VISIBLE_TOOLS)
 }
 
+private fun combineReasoning(explicit: String, extracted: String): String {
+    return listOf(explicit, extracted)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("\n\n")
+}
+
 private fun String.firstReadableLine(): String? {
     return lineSequence()
         .map { it.trim() }
         .firstOrNull { it.isNotBlank() }
 }
 
+private fun List<ReceivedAttachment>.receivedAttachmentPreview(): String? {
+    return when (size) {
+        0 -> null
+        1 -> first().label
+        else -> "$size attachments"
+    }
+}
+
+private fun List<ReceivedAttachment>.toRemoteAttachmentMessage(): String {
+    if (isEmpty()) return ""
+    return buildString {
+        appendLine("Generated files:")
+        this@toRemoteAttachmentMessage.forEach { attachment ->
+            append("[")
+            append(attachment.label.ifBlank { attachment.kind.name })
+            append("](")
+            append(attachment.url)
+            appendLine(")")
+        }
+    }.trim()
+}
+
+private fun List<ReceivedAttachment>.toReceivedAttachmentsJson(): String {
+    return Json.encodeToString(this)
+}
+
 private const val MAX_VISIBLE_TOOLS = 8
 private const val MAX_PREVIEW_LENGTH = 200
 private const val STREAM_DONE_SNAPSHOT_MS = 1_500L
-private const val STREAM_IDLE_CHECK_MS = 1_000L
-private const val STREAM_FIRST_EVENT_TIMEOUT_MS = 20_000L
-private const val STREAM_EVENT_IDLE_TIMEOUT_MS = 45_000L
 private const val MAX_STREAM_RETRIES = 3
 private val RETRY_BACKOFF_MS = longArrayOf(2_000L, 4_000L, 8_000L)

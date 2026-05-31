@@ -25,6 +25,8 @@ kotlinxCoroutinesTest = "1.11.0"
 lottieCompose = "6.6.6"
 coil = "3.2.0"
 phosphor = "2.1.1"
+kyantBackdrop = "1.0.1"
+qmLiquidGlass = "1.0.3"
 
 [libraries]
 # --- Compose ---
@@ -80,6 +82,10 @@ material-icons-extended = { group = "androidx.compose.material", name = "materia
 # --- Image Loading ---
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-video = { group = "io.coil-kt.coil3", name = "coil-video", version.ref = "coil" }
+
+# --- Liquid Glass Experiments ---
+kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "kyantBackdrop" }
+qm-liquidglass = { group = "com.qmdeve.liquidglass", name = "core", version.ref = "qmLiquidGlass" }
 
 # --- Testing ---
 mockk-android = { group = "io.mockk", name = "mockk-android", version.ref = "mockk" }

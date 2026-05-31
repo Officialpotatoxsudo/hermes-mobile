@@ -3,8 +3,11 @@ package com.hermes.mobile.core.network
 import com.hermes.mobile.core.model.ChatCompletionChunk
 import com.hermes.mobile.core.model.ChatCompletionResponse
 import com.hermes.mobile.core.model.ToolProgress
+import com.hermes.mobile.core.util.ReceivedAttachment
+import com.hermes.mobile.core.util.receivedAttachmentFromRemoteFile
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -35,6 +38,23 @@ class SsePayloadParser(
         }.getOrNull()
     }
 
+    fun parseReasoning(data: String): String? {
+        return runCatching {
+            val element = json.parseToJsonElement(data)
+            element.reasoningMessage()
+        }.getOrNull()
+    }
+
+    fun parseAttachment(data: String): ReceivedAttachment? {
+        return parseAttachments(data).firstOrNull()
+    }
+
+    fun parseAttachments(data: String): List<ReceivedAttachment> {
+        return runCatching {
+            json.parseToJsonElement(data).toReceivedAttachments()
+        }.getOrDefault(emptyList())
+    }
+
     fun parseError(data: String): String {
         return runCatching {
             val obj = json.decodeFromString<JsonObject>(data)
@@ -44,6 +64,51 @@ class SsePayloadParser(
                 ?: data.errorPreview()
         }.getOrDefault(data.errorPreview())
     }
+}
+
+private fun JsonElement.reasoningMessage(): String? {
+    return when (this) {
+        is JsonPrimitive -> contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        is JsonObject -> listOf(
+            this["delta"],
+            this["reasoning"],
+            this["reasoning_content"],
+            this["reasoning_delta"],
+            this["analysis"],
+            this["message"],
+            this["content"],
+            this["text"],
+        ).firstNotNullOfOrNull { it?.reasoningMessage() }
+        else -> null
+    }
+}
+
+private fun JsonElement.toReceivedAttachments(): List<ReceivedAttachment> {
+    return when (this) {
+        is JsonArray -> flatMap { it.toReceivedAttachments() }
+        is JsonObject -> {
+            val direct = toReceivedAttachment()?.let(::listOf).orEmpty()
+            direct + listOfNotNull(
+                this["attachments"],
+                this["files"],
+                this["artifacts"],
+                this["data"],
+            ).flatMap { it.toReceivedAttachments() }
+        }
+        else -> emptyList()
+    }
+}
+
+private fun JsonObject.toReceivedAttachment(): ReceivedAttachment? {
+    val url = firstReadableText("url", "href", "download_url", "downloadUrl", "file_url", "fileUrl", "uri")
+        ?: return null
+    val label = firstReadableText("name", "filename", "file_name", "fileName", "label", "title").orEmpty()
+    val mimeType = firstReadableText("mime_type", "mimeType", "content_type", "contentType")
+    return receivedAttachmentFromRemoteFile(url, label, mimeType)
+}
+
+private fun JsonObject.firstReadableText(vararg keys: String): String? {
+    return keys.firstNotNullOfOrNull { key -> this[key]?.readableMessage() }
 }
 
 private fun JsonElement.readableMessage(): String? {

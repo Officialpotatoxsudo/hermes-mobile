@@ -1,5 +1,6 @@
 package com.hermes.mobile.feature.home
 
+import com.hermes.mobile.core.data.local.MessageEntity
 import com.hermes.mobile.core.data.local.SessionEntity
 import com.hermes.mobile.core.settings.AgentProfile
 import com.hermes.mobile.core.util.agentIdFromChatSessionId
@@ -13,9 +14,17 @@ class HomeAgentListTest {
     fun latestSessionsByAgentUsesNewestSession() {
         val newer = session(id = "agent-chat-hermes", startedAt = 2_000, messageCount = 4)
         val older = session(id = "agent-chat-hermes", startedAt = 1_000, messageCount = 9)
-        val other = session(id = "manual-session", startedAt = 3_000, messageCount = 1)
+        val other = session(id = "manual-session", startedAt = 500, messageCount = 1)
 
         assertEquals(mapOf("hermes" to newer), latestSessionsByAgent(listOf(older, other, newer)))
+    }
+
+    @Test
+    fun latestSessionsByAgentUsesPlainRemoteSessionsForDefaultAgent() {
+        val remote = session(id = "server-session-1", startedAt = 5_000, messageCount = 4)
+        val olderDefault = session(id = "agent-chat-hermes--1", startedAt = 1_000, messageCount = 2)
+
+        assertEquals(mapOf("hermes" to remote), latestSessionsByAgent(listOf(olderDefault, remote)))
     }
 
     @Test
@@ -103,6 +112,135 @@ class HomeAgentListTest {
 
         assertEquals(listOf("Thinking"), rows.map { it.preview })
         assertEquals(listOf("thinking"), rows.map { it.liveState })
+    }
+
+    @Test
+    fun conversationInboxSynthesizesRowsForActiveStreamsWithoutSavedSession() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val rows = conversationInboxRows(
+            sessions = emptyList(),
+            agents = agents,
+            activeStreams = mapOf(
+                "agent-chat-hermes--streaming" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--streaming",
+                    assistantMessageId = 2L,
+                    userMessage = MessageEntity(
+                        id = 1L,
+                        sessionId = "agent-chat-hermes--streaming",
+                        role = "user",
+                        content = "Resume this chat",
+                        timestamp = 1L,
+                    ),
+                    isConnecting = true,
+                ),
+            ),
+            now = 2_000,
+        )
+
+        assertEquals(listOf("agent-chat-hermes--streaming"), rows.map { it.sessionId })
+        assertEquals(listOf("Hermes Agent"), rows.map { it.agentName })
+        assertEquals(listOf("Thinking"), rows.map { it.preview })
+        assertEquals(listOf("thinking"), rows.map { it.liveState })
+    }
+
+    @Test
+    fun dashboardMetricsCountLiveUnreadAndChats() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val rows = conversationInboxRows(
+            listOf(
+                session(id = "agent-chat-hermes--1", startedAt = 1_000, messageCount = 2, unreadCount = 3),
+                session(id = "agent-chat-hermes--2", startedAt = 2_000, messageCount = 4),
+                session(id = "agent-chat-hermes--3", startedAt = 3_000, messageCount = 5),
+            ),
+            agents,
+            activeStreams = mapOf(
+                "agent-chat-hermes--2" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--2",
+                    assistantMessageId = 2L,
+                    isConnecting = false,
+                    isStreaming = true,
+                ),
+                "agent-chat-hermes--3" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--3",
+                    assistantMessageId = 3L,
+                    error = "Network issue",
+                ),
+            ),
+        )
+
+        assertEquals(HomeDashboardMetrics(liveCount = 2, unreadCount = 3, chatCount = 3), dashboardMetrics(rows))
+    }
+
+    @Test
+    fun dashboardStateLabelPrioritizesLiveStatesOverUnread() {
+        assertEquals("Issue", dashboardStateLabel("error", unreadCount = 4))
+        assertEquals("Thinking", dashboardStateLabel("thinking", unreadCount = 4))
+        assertEquals("Live", dashboardStateLabel("streaming", unreadCount = 4))
+        assertEquals("Unread", dashboardStateLabel("unread", unreadCount = 4))
+    }
+
+    @Test
+    fun dashboardContinueRowPrioritizesIssueLiveUnreadRecentThenLatest() {
+        val agents = listOf(AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"))
+        val sessions = listOf(
+            session(id = "agent-chat-hermes--latest", startedAt = 5_000, messageCount = 2, localLastActivityAt = 5_000),
+            session(id = "agent-chat-hermes--recent", startedAt = 3_000, messageCount = 2, localLastActivityAt = 199_500),
+            session(id = "agent-chat-hermes--unread", startedAt = 2_000, messageCount = 2, unreadCount = 1),
+            session(id = "agent-chat-hermes--live", startedAt = 1_000, messageCount = 2),
+            session(id = "agent-chat-hermes--thinking", startedAt = 750, messageCount = 2),
+            session(id = "agent-chat-hermes--error", startedAt = 500, messageCount = 2),
+        )
+        val rows = conversationInboxRows(
+            sessions,
+            agents,
+            activeStreams = mapOf(
+                "agent-chat-hermes--live" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--live",
+                    assistantMessageId = 2L,
+                    isConnecting = false,
+                    isStreaming = true,
+                ),
+                "agent-chat-hermes--thinking" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--thinking",
+                    assistantMessageId = 3L,
+                    isConnecting = true,
+                ),
+                "agent-chat-hermes--error" to ChatStreamSnapshot(
+                    sessionId = "agent-chat-hermes--error",
+                    assistantMessageId = 4L,
+                    error = "Tool failed",
+                ),
+            ),
+            now = 200_000,
+        )
+
+        assertEquals("agent-chat-hermes--error", dashboardContinueRow(rows)?.sessionId)
+        assertEquals("agent-chat-hermes--thinking", dashboardContinueRow(rows.filterNot { it.liveState == "error" })?.sessionId)
+        assertEquals("agent-chat-hermes--live", dashboardContinueRow(rows.filterNot { it.liveState in setOf("error", "thinking") })?.sessionId)
+        assertEquals("agent-chat-hermes--unread", dashboardContinueRow(rows.filterNot { it.liveState in setOf("error", "thinking", "streaming") })?.sessionId)
+        assertEquals("agent-chat-hermes--recent", dashboardContinueRow(rows.filterNot { it.liveState in setOf("error", "thinking", "streaming", "unread") })?.sessionId)
+        assertEquals("agent-chat-hermes--latest", dashboardContinueRow(rows.filter { it.liveState == "none" })?.sessionId)
+    }
+
+    @Test
+    fun dashboardAgentRowsKeepDefaultFirstThenOrderByLatestActivity() {
+        val agents = listOf(
+            AgentProfile(id = "hermes", name = "Hermes Agent", subtitle = "Private", initial = "H"),
+            AgentProfile(id = "research", name = "Research", subtitle = "Find sources", initial = "R"),
+            AgentProfile(id = "code", name = "Code", subtitle = "Patch code", initial = "C"),
+            AgentProfile(id = "draft", name = "Draft", subtitle = "Write copy", initial = "D"),
+        )
+        val rows = dashboardAgentRows(
+            agents = agents,
+            sessions = listOf(
+                session(id = "agent-chat-code--1", startedAt = 1_000, messageCount = 2, localLastActivityAt = 8_000),
+                session(id = "agent-chat-research--1", startedAt = 2_000, messageCount = 4, localLastActivityAt = 6_000),
+                session(id = "agent-chat-hermes--1", startedAt = 3_000, messageCount = 6, localLastActivityAt = 4_000),
+            ),
+        )
+
+        assertEquals(listOf("hermes", "code", "research", "draft"), rows.map { it.agent.id })
+        assertEquals(listOf("agent-chat-hermes--1", "agent-chat-code--1", "agent-chat-research--1", null), rows.map { it.latestSessionId })
     }
 
     @Test

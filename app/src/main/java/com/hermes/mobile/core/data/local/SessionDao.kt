@@ -39,6 +39,12 @@ interface SessionDao {
 
     suspend fun latest(): SessionEntity? = latest(LEGACY_ACCOUNT_SCOPE)
 
+    @Query("SELECT * FROM sessions WHERE account_scope = :accountScope ORDER BY local_last_activity_at DESC, started_at DESC")
+    suspend fun getByScope(accountScope: String): List<SessionEntity>
+
+    @Query("SELECT * FROM sessions WHERE account_scope != :accountScope ORDER BY local_last_activity_at DESC, started_at DESC")
+    suspend fun getOutsideScope(accountScope: String): List<SessionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(sessions: List<SessionEntity>)
 

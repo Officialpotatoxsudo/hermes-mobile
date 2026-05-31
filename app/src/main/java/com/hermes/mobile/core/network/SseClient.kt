@@ -2,8 +2,10 @@ package com.hermes.mobile.core.network
 
 import com.hermes.mobile.core.auth.TokenStore
 import com.hermes.mobile.core.model.ChatCompletionRequest
+import com.hermes.mobile.core.model.ChatMessageDto
 import com.hermes.mobile.core.model.ToolProgress
 import com.hermes.mobile.core.model.TokenUsage
+import com.hermes.mobile.core.util.ReceivedAttachment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +29,8 @@ import javax.inject.Singleton
 sealed interface SseEvent {
     data class Opened(val sessionId: String?) : SseEvent
     data class Delta(val text: String) : SseEvent
+    data class ReasoningDelta(val text: String) : SseEvent
+    data class Attachment(val attachment: ReceivedAttachment) : SseEvent
     data class Tool(val progress: ToolProgress) : SseEvent
     data class Usage(val usage: TokenUsage) : SseEvent
     data object Done : SseEvent
@@ -53,6 +57,7 @@ class SseClient @Inject constructor(
         val httpRequest = Request.Builder()
             .url(tokenStore.serverUrl.endpoint("v1/chat/completions"))
             .applyBearer(tokenStore.apiKey)
+            .applyHermesMobileClientHeaders()
             .applyHermesSessionHeaders(sessionId, tokenStore.apiKey)
             .header("Accept", "text/event-stream")
             .post(body)
@@ -72,8 +77,13 @@ class SseClient @Inject constructor(
                             close()
                         }
                         type == "hermes.tool.progress" -> parser.parseTool(data)?.let { trySend(SseEvent.Tool(it)) }
+                        type in reasoningEventTypes -> parser.parseReasoning(data)?.let { trySend(SseEvent.ReasoningDelta(it)) }
+                        type in attachmentEventTypes -> parser.parseAttachments(data).forEach { trySend(SseEvent.Attachment(it)) }
                         else -> parser.parseChunk(data)?.let { chunk ->
-                            val delta = chunk.choices.firstOrNull()?.delta?.content
+                            val chatDelta = chunk.choices.firstOrNull()?.delta
+                            val reasoning = chatDelta?.reasoningText
+                            if (!reasoning.isNullOrEmpty()) trySend(SseEvent.ReasoningDelta(reasoning))
+                            val delta = chatDelta?.content
                             if (!delta.isNullOrEmpty()) trySend(SseEvent.Delta(delta))
                             chunk.usage?.let { trySend(SseEvent.Usage(it)) }
                         }
@@ -85,8 +95,10 @@ class SseClient @Inject constructor(
                     val fallback = parser.parseCompletion(bodyText)
                     if (response?.isSuccessful == true && fallback != null) {
                         trySend(SseEvent.Opened(response.header("x-hermes-session-id")))
-                        val text = fallback.choices.firstOrNull()?.message?.content
-                            ?: fallback.choices.firstOrNull()?.text
+                        val message = fallback.choices.firstOrNull()?.message
+                        val reasoning = message?.reasoningText()
+                        if (!reasoning.isNullOrBlank()) trySend(SseEvent.ReasoningDelta(reasoning))
+                        val text = message?.content ?: fallback.choices.firstOrNull()?.text
                         if (!text.isNullOrBlank()) trySend(SseEvent.Delta(text))
                         fallback.usage?.let { trySend(SseEvent.Usage(it)) }
                         trySend(SseEvent.Done)
@@ -138,6 +150,7 @@ class SseClient @Inject constructor(
         val httpRequest = Request.Builder()
             .url(tokenStore.serverUrl.endpoint("v1/chat/completions"))
             .applyBearer(tokenStore.apiKey)
+            .applyHermesMobileClientHeaders()
             .applyHermesSessionHeaders(sessionId, tokenStore.apiKey)
             .post(body)
             .build()
@@ -147,17 +160,41 @@ class SseClient @Inject constructor(
                 error("Server error HTTP ${response.code}: ${parser.parseError(bodyText)}")
             }
             val completion = parser.parseCompletion(bodyText) ?: error("Server returned unreadable response")
-            val text = completion.choices.firstOrNull()?.message?.content
+            val message = completion.choices.firstOrNull()?.message
+            val reasoning = message?.reasoningText()
+            val text = message?.content
                 ?: completion.choices.firstOrNull()?.text
                 ?: ""
             return buildList {
                 add(SseEvent.Opened(response.header("x-hermes-session-id")))
+                if (!reasoning.isNullOrBlank()) add(SseEvent.ReasoningDelta(reasoning))
                 if (text.isNotBlank()) add(SseEvent.Delta(text))
                 completion.usage?.let { add(SseEvent.Usage(it)) }
                 add(SseEvent.Done)
             }
         }
     }
+}
+
+private val reasoningEventTypes = setOf(
+    "hermes.reasoning",
+    "hermes.reasoning.delta",
+    "reasoning",
+    "reasoning.delta",
+)
+
+private val attachmentEventTypes = setOf(
+    "hermes.attachment",
+    "hermes.file",
+    "hermes.artifact",
+    "hermes.output.file",
+    "attachment",
+    "file",
+    "artifact",
+)
+
+private fun ChatMessageDto.reasoningText(): String? {
+    return listOf(reasoningContent, reasoning).firstOrNull { !it.isNullOrBlank() }
 }
 
 private fun Response.isProxyLike(): Boolean {
@@ -178,5 +215,13 @@ fun Request.Builder.applyHermesSessionHeaders(sessionId: String?, apiKey: String
     if (cleanApiKey.isNotBlank()) {
         header("X-Hermes-Session-Key", "mobile:${cleanSessionId.take(240)}")
     }
+    return this
+}
+
+internal const val HERMES_MOBILE_CLIENT_PLATFORM = "mobile_app"
+
+fun Request.Builder.applyHermesMobileClientHeaders(): Request.Builder {
+    header("X-Hermes-Client-Platform", HERMES_MOBILE_CLIENT_PLATFORM)
+    header("X-Hermes-Source", HERMES_MOBILE_CLIENT_PLATFORM)
     return this
 }

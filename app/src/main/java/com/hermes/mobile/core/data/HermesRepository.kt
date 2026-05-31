@@ -14,13 +14,17 @@ import com.hermes.mobile.core.model.SessionMessageDto
 import com.hermes.mobile.core.network.HermesRestClient
 import com.hermes.mobile.core.network.SseClient
 import com.hermes.mobile.core.network.SseEvent
-import com.hermes.mobile.core.util.deleteHermesMediaDirectory
+import com.hermes.mobile.core.util.deleteAppOwnedMessageMedia
+import com.hermes.mobile.core.util.legacyImageUrisFromText
+import com.hermes.mobile.core.util.messageImageUrisFromJson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,24 +38,40 @@ class HermesRepository @Inject constructor(
     private val tokenStore: TokenStore,
     @param:ApplicationContext private val appContext: Context,
 ) {
+    private val migratedLocalScopes = ConcurrentHashMap.newKeySet<String>()
+
     fun sessions(query: String): Flow<List<SessionEntity>> {
         val cleanQuery = query.cleanRepositoryQuery()
         return accountScopeFlow().flatMapLatest { scope ->
-            if (cleanQuery == null) sessionDao.getAllFlow(scope) else sessionDao.searchFlow(scope, cleanQuery)
+            val flow = if (cleanQuery == null) sessionDao.getAllFlow(scope) else sessionDao.searchFlow(scope, cleanQuery)
+            flow.onStart { migrateLocalHistoryToActiveScopeIfNeeded(scope) }
         }
     }
 
     fun messages(sessionId: String): Flow<List<MessageEntity>> {
         return accountScopeFlow().flatMapLatest { scope ->
             messageDao.getBySessionIdFlow(scope, sessionId)
+                .onStart { migrateLocalHistoryToActiveScopeIfNeeded(scope) }
         }
     }
 
-    suspend fun latestSession(): SessionEntity? = sessionDao.latest(activeScope())
+    suspend fun latestSession(): SessionEntity? {
+        val scope = activeScope()
+        migrateLocalHistoryToActiveScopeIfNeeded(scope)
+        return sessionDao.latest(scope)
+    }
 
-    suspend fun cachedSession(sessionId: String): SessionEntity? = sessionDao.getById(activeScope(), sessionId)
+    suspend fun cachedSession(sessionId: String): SessionEntity? {
+        val scope = activeScope()
+        migrateLocalHistoryToActiveScopeIfNeeded(scope)
+        return sessionDao.getById(scope, sessionId)
+    }
 
-    suspend fun cachedMessages(sessionId: String): List<MessageEntity> = messageDao.getBySessionId(activeScope(), sessionId)
+    suspend fun cachedMessages(sessionId: String): List<MessageEntity> {
+        val scope = activeScope()
+        migrateLocalHistoryToActiveScopeIfNeeded(scope)
+        return messageDao.getBySessionId(scope, sessionId)
+    }
 
     suspend fun saveLocalSession(session: SessionEntity) {
         sessionDao.upsert(session.copy(accountScope = activeScope()))
@@ -88,6 +108,7 @@ class HermesRepository @Inject constructor(
 
     suspend fun syncSessions(): Result<Unit> {
         val scope = activeScope()
+        migrateLocalHistoryToActiveScopeIfNeeded(scope)
         return runCatching {
             var offset = 0
             while (true) {
@@ -101,10 +122,19 @@ class HermesRepository @Inject constructor(
 
     suspend fun syncMessages(sessionId: String): Result<Unit> {
         val scope = activeScope()
+        migrateLocalHistoryToActiveScopeIfNeeded(scope)
         return restClient.fetchMessages(sessionId).mapCatching { response ->
+            val beforeSync = messageDao.getBySessionId(scope, sessionId)
             val messages = response.messages.map { it.toEntity(scope, sessionId) }
             messageDao.upsertAll(messages)
             messageDao.deleteStaleRemoteMessages(scope, sessionId, messages.map { it.id })
+            val afterSyncIds = messageDao.getBySessionId(scope, sessionId).map { it.id }.toSet()
+            val missingLocalHistory = beforeSync
+                .filter { it.id !in afterSyncIds }
+                .map { it.copy(remoteBacked = false) }
+            if (missingLocalHistory.isNotEmpty()) {
+                messageDao.upsertAll(missingLocalHistory)
+            }
         }
     }
 
@@ -114,7 +144,10 @@ class HermesRepository @Inject constructor(
 
     suspend fun clearLocalDataForActiveConnection() {
         val scope = activeScope()
-        deleteHermesMediaDirectory(appContext)
+        val scopedMediaUris = messageDao.getByScope(scope).flatMap { message ->
+            messageImageUrisFromJson(message.imageUrisJson) + legacyImageUrisFromText(message.content)
+        }
+        deleteAppOwnedMessageMedia(appContext, scopedMediaUris)
         messageDao.deleteByScope(scope)
         sessionDao.deleteByScope(scope)
     }
@@ -146,6 +179,47 @@ class HermesRepository @Inject constructor(
     private suspend fun activeScope(): String {
         return tokenStore.connectionIdentity().ifBlank { LEGACY_ACCOUNT_SCOPE }
     }
+
+    private suspend fun migrateLocalHistoryToActiveScopeIfNeeded(scope: String) {
+        if (scope.isBlank() || scope == LEGACY_ACCOUNT_SCOPE) return
+        if (!migratedLocalScopes.add(scope)) return
+        runCatching {
+            val activeSessions = sessionDao.getByScope(scope).associateBy { it.id }
+            val sourceSessions = sessionDao.getOutsideScope(scope)
+            if (sourceSessions.isEmpty()) return@runCatching
+
+            val sourceById = sourceSessions
+                .groupBy { it.id }
+                .mapValues { (_, sessions) ->
+                    sessions.maxWith(
+                        compareBy<SessionEntity> { it.localLastActivityAt }
+                            .thenBy { it.startedAt },
+                    )
+                }
+            val sessionsToCopy = sourceById.values.mapNotNull { source ->
+                val active = activeSessions[source.id]
+                if (active == null || source.localLastActivityAt > active.localLastActivityAt) {
+                    source.copy(accountScope = scope)
+                } else {
+                    null
+                }
+            }
+            if (sessionsToCopy.isNotEmpty()) {
+                sessionDao.upsertAll(sessionsToCopy)
+            }
+
+            val knownSessionIds = activeSessions.keys + sourceById.keys
+            val activeMessageKeys = messageDao.getByScope(scope)
+                .mapTo(mutableSetOf()) { it.sessionId to it.id }
+            val messagesToCopy = messageDao.getOutsideScope(scope)
+                .filter { it.sessionId in knownSessionIds }
+                .filter { (it.sessionId to it.id) !in activeMessageKeys }
+                .map { it.copy(accountScope = scope) }
+            if (messagesToCopy.isNotEmpty()) {
+                messageDao.upsertAll(messagesToCopy)
+            }
+        }
+    }
 }
 
 private const val syncSessionsPageSize = 50
@@ -176,6 +250,7 @@ private fun SessionMessageDto.toEntity(accountScope: String, sessionId: String):
         sessionId = sessionId,
         role = role,
         content = content,
+        reasoning = reasoningContent ?: reasoning.orEmpty(),
         timestamp = timestamp,
         accountScope = accountScope,
         remoteBacked = true,

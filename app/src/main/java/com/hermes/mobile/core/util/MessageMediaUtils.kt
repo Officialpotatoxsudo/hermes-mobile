@@ -1,12 +1,19 @@
 package com.hermes.mobile.core.util
 
 import android.content.Context
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.net.URLDecoder
 import java.util.Locale
 
+@Serializable
 data class ReceivedAttachment(
     val url: String,
     val label: String,
@@ -14,6 +21,7 @@ data class ReceivedAttachment(
     val mimeType: String? = null,
 )
 
+@Serializable
 enum class ReceivedAttachmentKind {
     Image,
     Video,
@@ -72,7 +80,7 @@ fun readableMessageText(content: String, imageCount: Int): String {
 fun receivedAttachmentsFromMessage(content: String): List<ReceivedAttachment> {
     if (content.isBlank()) return emptyList()
 
-    val attachments = mutableListOf<ReceivedAttachment>()
+    val attachments = structuredReceivedAttachmentsFromMessage(content).toMutableList()
     val consumedRanges = mutableListOf<IntRange>()
 
     markdownImagePattern.findAll(content).forEach { match ->
@@ -102,6 +110,14 @@ fun receivedAttachmentsFromMessage(content: String): List<ReceivedAttachment> {
     return attachments.distinctBy { it.url }
 }
 
+fun receivedAttachmentFromRemoteFile(
+    rawUrl: String,
+    labelHint: String = "",
+    mimeType: String? = null,
+): ReceivedAttachment? {
+    return buildReceivedAttachment(rawUrl, labelHint, mimeTypeHint = mimeType)
+}
+
 fun visibleReceivedAttachmentText(content: String): String {
     val attachments = receivedAttachmentsFromMessage(content)
     if (attachments.isEmpty()) return content.trim()
@@ -114,6 +130,7 @@ fun visibleReceivedAttachmentText(content: String): String {
             if (url in attachmentUrls) "" else match.value
         }
     }
+    cleanContent = cleanContent.withoutStructuredAttachmentPayloads()
     cleanContent = bareHttpUrlPattern.replace(cleanContent) { match ->
         val url = match.value.cleanReceivedAttachmentUrl()
         if (url in attachmentUrls) "" else match.value
@@ -124,6 +141,7 @@ fun visibleReceivedAttachmentText(content: String): String {
             val trimmed = line.trim()
             val bulletless = trimmed.trimStart('-', '*', '•').trim()
             when {
+                trimmed.isStructuredAttachmentPayloadLine() -> ""
                 trimmed.cleanReceivedAttachmentUrl() in attachmentUrls -> ""
                 bulletless.cleanReceivedAttachmentUrl() in attachmentUrls -> ""
                 else -> line
@@ -173,10 +191,11 @@ private fun buildReceivedAttachment(
     rawUrl: String,
     labelHint: String,
     forcedKind: ReceivedAttachmentKind? = null,
+    mimeTypeHint: String? = null,
 ): ReceivedAttachment? {
     val url = rawUrl.cleanReceivedAttachmentUrl()
     if (!url.startsWith("https://", ignoreCase = true) && !url.startsWith("http://", ignoreCase = true)) return null
-    val kind = forcedKind ?: inferReceivedAttachmentKind(url, labelHint) ?: return null
+    val kind = forcedKind ?: inferReceivedAttachmentKind(url, labelHint, mimeTypeHint) ?: return null
     val label = labelHint.cleanReceivedAttachmentLabel()
         ?: url.fileNameFromUrl()
         ?: kind.defaultReceivedAttachmentLabel()
@@ -184,11 +203,19 @@ private fun buildReceivedAttachment(
         url = url,
         label = label,
         kind = kind,
-        mimeType = mimeTypeForReceivedAttachment(kind, url),
+        mimeType = mimeTypeHint.cleanMimeType() ?: mimeTypeForReceivedAttachment(kind, url),
     )
 }
 
-private fun inferReceivedAttachmentKind(url: String, labelHint: String): ReceivedAttachmentKind? {
+private fun inferReceivedAttachmentKind(url: String, labelHint: String, mimeTypeHint: String? = null): ReceivedAttachmentKind? {
+    val mimeType = mimeTypeHint.cleanMimeType()?.lowercase(Locale.US)
+    when {
+        mimeType?.startsWith("image/") == true -> return ReceivedAttachmentKind.Image
+        mimeType?.startsWith("video/") == true -> return ReceivedAttachmentKind.Video
+        mimeType?.startsWith("audio/") == true -> return ReceivedAttachmentKind.File
+        mimeType?.startsWith("text/") == true -> return ReceivedAttachmentKind.File
+        mimeType?.startsWith("application/") == true -> return ReceivedAttachmentKind.File
+    }
     val extension = (url.extensionFromUrl() ?: labelHint.extensionFromLabel()).orEmpty()
     return when (extension.lowercase(Locale.US)) {
         in imageAttachmentExtensions -> ReceivedAttachmentKind.Image
@@ -196,6 +223,163 @@ private fun inferReceivedAttachmentKind(url: String, labelHint: String): Receive
         in fileAttachmentExtensions -> ReceivedAttachmentKind.File
         else -> null
     }
+}
+
+private fun structuredReceivedAttachmentsFromMessage(content: String): List<ReceivedAttachment> {
+    return content.structuredAttachmentPayloadCandidates()
+        .flatMap { candidate ->
+            runCatching {
+                Json.parseToJsonElement(candidate.payload).receivedAttachmentsFromJsonPayload()
+            }.getOrDefault(emptyList())
+        }
+}
+
+private fun String.isStructuredAttachmentPayloadLine(): Boolean {
+    val line = trim()
+    if (!line.startsWith("{") && !line.startsWith("[")) return false
+    return runCatching {
+        Json.parseToJsonElement(line).receivedAttachmentsFromJsonPayload().isNotEmpty()
+    }.getOrDefault(false)
+}
+
+private fun String.withoutStructuredAttachmentPayloads(): String {
+    val removableRanges = structuredAttachmentPayloadCandidates()
+        .filter { candidate ->
+            runCatching {
+                Json.parseToJsonElement(candidate.payload).receivedAttachmentsFromJsonPayload().isNotEmpty()
+            }.getOrDefault(false)
+        }
+        .map { it.range }
+        .distinct()
+        .sortedByDescending { it.first }
+    if (removableRanges.isEmpty()) return this
+    val builder = StringBuilder(this)
+    removableRanges.forEach { range ->
+        builder.replace(range.first, range.last + 1, "")
+    }
+    return builder.toString()
+}
+
+private data class StructuredPayloadCandidate(
+    val payload: String,
+    val range: IntRange,
+)
+
+private fun String.structuredAttachmentPayloadCandidates(): List<StructuredPayloadCandidate> {
+    val candidates = mutableListOf<StructuredPayloadCandidate>()
+    fencedJsonPattern.findAll(this).forEach { match ->
+        val payload = match.groupValues.getOrNull(1).orEmpty().trim()
+        if (payload.isNotBlank()) {
+            candidates += StructuredPayloadCandidate(payload, match.range)
+        }
+    }
+    lineSequenceWithRanges()
+        .filter { it.text.trim().let { line -> line.startsWith("{") || line.startsWith("[") } }
+        .forEach { line ->
+            candidates += StructuredPayloadCandidate(line.text.trim(), line.range)
+        }
+    candidates += balancedJsonCandidates()
+    return candidates.distinctBy { it.range }
+}
+
+private data class RangedLine(
+    val text: String,
+    val range: IntRange,
+)
+
+private fun String.lineSequenceWithRanges(): Sequence<RangedLine> = sequence {
+    var start = 0
+    while (start <= length) {
+        val newline = indexOf('\n', start).takeIf { it >= 0 } ?: length
+        val endExclusive = if (newline > start && this@lineSequenceWithRanges[newline - 1] == '\r') newline - 1 else newline
+        if (endExclusive > start) {
+            yield(RangedLine(substring(start, endExclusive), start until endExclusive))
+        }
+        if (newline == length) break
+        start = newline + 1
+    }
+}
+
+private fun String.balancedJsonCandidates(): List<StructuredPayloadCandidate> {
+    val candidates = mutableListOf<StructuredPayloadCandidate>()
+    var index = 0
+    while (index < length) {
+        val opener = this[index]
+        if (opener != '{' && opener != '[') {
+            index += 1
+            continue
+        }
+        val closer = if (opener == '{') '}' else ']'
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var cursor = index
+        while (cursor < length) {
+            val char = this[cursor]
+            when {
+                escaped -> escaped = false
+                char == '\\' && inString -> escaped = true
+                char == '"' -> inString = !inString
+                !inString && char == opener -> depth += 1
+                !inString && char == closer -> {
+                    depth -= 1
+                    if (depth == 0) {
+                        val range = index..cursor
+                        candidates += StructuredPayloadCandidate(substring(range).trim(), range)
+                        index = cursor
+                        break
+                    }
+                }
+            }
+            cursor += 1
+        }
+        index += 1
+    }
+    return candidates
+}
+
+private fun JsonElement.receivedAttachmentsFromJsonPayload(): List<ReceivedAttachment> {
+    return when (this) {
+        is JsonArray -> flatMap { it.receivedAttachmentsFromJsonPayload() }
+        is JsonObject -> {
+            val nested = listOfNotNull(
+                this["attachments"],
+                this["files"],
+                this["artifacts"],
+                this["data"],
+            ).flatMap { it.receivedAttachmentsFromJsonPayload() }
+            val direct = toReceivedAttachmentFromJson()?.let(::listOf).orEmpty()
+            direct + nested
+        }
+        else -> emptyList()
+    }
+}
+
+private fun JsonObject.toReceivedAttachmentFromJson(): ReceivedAttachment? {
+    val url = firstJsonText("url", "href", "download_url", "downloadUrl", "file_url", "fileUrl", "uri")
+        ?: return null
+    val label = firstJsonText("name", "filename", "file_name", "fileName", "label", "title").orEmpty()
+    val mimeType = firstJsonText("mime_type", "mimeType", "content_type", "contentType")
+    return receivedAttachmentFromRemoteFile(url, label, mimeType)
+}
+
+private fun JsonObject.firstJsonText(vararg keys: String): String? {
+    return keys.firstNotNullOfOrNull { key ->
+        (this[key] as? JsonPrimitive)
+            ?.contentOrNull
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.firstOrNull { it.isNotBlank() }
+    }
+}
+
+private fun String?.cleanMimeType(): String? {
+    return this
+        ?.trim()
+        ?.lineSequence()
+        ?.firstOrNull()
+        ?.trim()
+        ?.takeIf { it.contains("/") && it.length <= MAX_MIME_TYPE_LENGTH }
 }
 
 private fun String.cleanReceivedAttachmentUrl(): String {
@@ -326,7 +510,8 @@ private fun String.isUriContinuation(current: String): Boolean {
 private fun String.isAllowedDataImageUri(): Boolean {
     val lower = lowercase(Locale.US)
     val allowedPrefix = allowedDataImagePrefixes.firstOrNull { lower.startsWith(it) } ?: return false
-    return length > allowedPrefix.length
+    val payload = substring(allowedPrefix.length).trim()
+    return payload.isNotBlank() && payload.length <= MAX_DATA_IMAGE_BASE64_CHARS
 }
 
 private fun hermesMediaDirectory(context: Context): File {
@@ -373,6 +558,7 @@ private fun File.isInside(directory: File): Boolean {
 private const val HERMES_MEDIA_DIRECTORY = "hermes-media"
 private const val HERMES_FILE_PROVIDER_AUTHORITY = "com.hermes.mobile.fileprovider"
 private const val MEDIA_PROVIDER_AUTHORITY = "media"
+private const val MAX_DATA_IMAGE_BASE64_CHARS = 12 * 1024 * 1024
 private val allowedDataImagePrefixes = listOf(
     "data:image/png;base64,",
     "data:image/jpeg;base64,",
@@ -381,8 +567,10 @@ private val allowedDataImagePrefixes = listOf(
 private val legacyImageUriPattern = Regex("""(?i)(content://\S+|data:image/(?:png|jpeg|webp);base64,\S+)""")
 private val wrappedUriTailPattern = Regex("""[A-Za-z0-9._~%+-]+""")
 private const val MAX_RECEIVED_ATTACHMENT_LABEL_LENGTH = 80
-private val markdownImagePattern = Regex("""!\[([^\]]*)]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
-private val markdownLinkPattern = Regex("""(?<!!)\[([^\]]+)]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
+private const val MAX_MIME_TYPE_LENGTH = 120
+private val fencedJsonPattern = Regex("""(?is)```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```""")
+private val markdownImagePattern = Regex("""!\[([^\]]*)\]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
+private val markdownLinkPattern = Regex("""(?<!!)\[([^\]]+)\]\((https?://[^)\s]+)\)""", RegexOption.IGNORE_CASE)
 private val bareHttpUrlPattern = Regex("""https?://[^\s)>\]]+""", RegexOption.IGNORE_CASE)
 private val imageAttachmentExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "avif")
 private val videoAttachmentExtensions = setOf("mp4", "m4v", "mov", "webm", "mkv")

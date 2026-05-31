@@ -55,7 +55,8 @@ import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.hermes.mobile.R
-import com.hermes.mobile.ui.components.frostedGlass
+import com.hermes.mobile.core.settings.HermesGlassRole
+import com.hermes.mobile.ui.components.hermesGlass
 
 @Composable
 fun ConnectionSetupScreen(
@@ -127,11 +128,11 @@ fun ConnectionSetupScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .frostedGlass(
-                    colors = colors,
+                .hermesGlass(
                     shape = RoundedCornerShape(26.dp),
-                    containerAlpha = 0.56f,
-                    borderAlpha = 0.12f,
+                    role = HermesGlassRole.ReadablePanel,
+                    normalContainerAlpha = 0.56f,
+                    normalBorderAlpha = 0.12f,
                 )
                 .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
@@ -301,3 +302,4 @@ private fun HermesTextField(
         modifier = Modifier.fillMaxWidth(),
     )
 }
+
